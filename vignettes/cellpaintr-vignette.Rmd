@@ -97,7 +97,7 @@ sce <- removeZeroInflation(sce)
 Transform non-negatives features and scale all features.
 
 ```{r transform-data}
-sce <- transformLogScale(sce, robust = TRUE)
+sce <- transformScale(sce, robust = TRUE)
 ```
 
 ## Unsupervised Analysis

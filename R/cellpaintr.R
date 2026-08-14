@@ -207,7 +207,7 @@ plotCellsPerImage <- function(sce, bins = 100) {
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce, robust = TRUE)
+#' sce <- transformScale(sce, robust = TRUE)
 #' sce <- scater::runPCA(sce, exprs_values = "tfmfeatures", ncomponents = 10)
 #' plotPCACor(sce, filter_by = 1)
 #'
@@ -346,9 +346,10 @@ removeZeroInflation <- function(sce, proportion = 0.2) {
     sce[!(prop_zeros > proportion), ]
 }
 
-#' Filter low variance features
+#' Transform, center, and scale features
 #'
 #' @importFrom SummarizedExperiment assay assay<-
+#' @importFrom stats qlogis qnorm
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -359,14 +360,54 @@ removeZeroInflation <- function(sce, proportion = 0.2) {
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
-transformLogScale <- function(sce, robust = FALSE) {
+transformScale <- function(sce, robust = FALSE) {
     mat <- assay(sce, "features")
 
-    # log(x+1) transform on non-negative valued features
-    non_neg_features <- apply(mat, 1, function(x) sum(x >= 0) == length(x))
-    mat[non_neg_features, ] <- log1p(mat[non_neg_features, ])
+    # count features
+    count_ids <- str_detect(rownames(mat), "Correlation_K_")
+    submat <- mat[count_ids, ]
+    submat <- log(submat)
+    mat[count_ids, ] <- submat
+
+    # correlation features
+    corr_ids <- str_detect(rownames(mat), "_Correlation_")
+    submat <- mat[corr_ids, ]
+    submat <- atanh(submat)
+    mat[corr_ids, ] <- submat
+
+    # proportion features
+    prop_ids <- str_detect(rownames(mat), "Texture_AngularSecondMoment_")
+    submat <- mat[prop_ids, ]
+    submat <- qlogis(submat)
+    mat[prop_ids, ] <- submat
+
+    # proportion features with inflation at 1
+    prop_ids <- str_detect(
+        rownames(mat),
+        "Correlation_Costes_|Correlation_Manders_"
+    )
+    submat <- mat[prop_ids, ]
+    quantile_norm <- function(x) {
+        n <- sum(!is.na(x))
+        r <- rank(x, na.last = "keep", ties.method = "random")
+        # Blom adjustment to avoid -Inf and Inf
+        qnorm((r - 0.375) / (n + 0.25))
+    }
+    submat <- t(apply(submat, 1, quantile_norm))
+    mat[prop_ids, ] <- submat
+
+    # fix infinities
+    cap_inf <- function(x) {
+        finite_x <- x[is.finite(x)]
+        max_val <- max(finite_x, na.rm = TRUE)
+        min_val <- min(finite_x, na.rm = TRUE)
+        x[x == Inf] <- max_val
+        x[x == -Inf] <- min_val
+        x
+    }
+    mat <- t(apply(mat, 1, cap_inf))
 
     if (!robust) {
         # option: standard z-score
@@ -510,7 +551,7 @@ compute_y_hat <- function(feature_name,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -631,7 +672,7 @@ aggregateYhat <- function(sce,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -684,7 +725,7 @@ plotLOO <- function(sce,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -760,7 +801,7 @@ calculateStats <- function(sce,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -831,7 +872,7 @@ volcanoPlot <- function(sce,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -911,7 +952,7 @@ plotROC <- function(sce,
 #' set.seed(23)
 #' cell_file <- generate_data()
 #' sce <- loadData(cell_file)
-#' sce <- transformLogScale(sce)
+#' sce <- transformScale(sce)
 #'
 #' sce$Drug <- as.factor(sce$Drug)
 #' sce$Drug <- relevel(sce$Drug, ref = "D1")

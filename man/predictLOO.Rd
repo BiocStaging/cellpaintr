@@ -48,7 +48,7 @@ Predict target from features
 set.seed(23)
 cell_file <- generate_data()
 sce <- loadData(cell_file)
-sce <- transformLogScale(sce)
+sce <- transformScale(sce)
 
 sce$Drug <- as.factor(sce$Drug)
 sce$Drug <- relevel(sce$Drug, ref = "D1")

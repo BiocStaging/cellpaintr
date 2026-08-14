@@ -2,7 +2,7 @@ test_that("train prediction model on types", {
     set.seed(23)
     cell_file <- generate_data()
     sce <- loadData(cell_file)
-    sce <- transformLogScale(sce)
+    sce <- transformScale(sce)
 
     sce$Drug <- as.factor(sce$Drug)
     sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -27,7 +27,7 @@ test_that("train prediction model on types with weights", {
     set.seed(23)
     cell_file <- generate_data()
     sce <- loadData(cell_file)
-    sce <- transformLogScale(sce)
+    sce <- transformScale(sce)
 
     # aggregate
     aggr <- scrapper::aggregateAcrossCells(
@@ -64,7 +64,7 @@ test_that("train prediction model on channels", {
     set.seed(23)
     cell_file <- generate_data()
     sce <- loadData(cell_file)
-    sce <- transformLogScale(sce)
+    sce <- transformScale(sce)
 
     sce$Drug <- as.factor(sce$Drug)
     sce$Drug <- relevel(sce$Drug, ref = "D1")
@@ -89,7 +89,7 @@ test_that("extract prediction scores", {
     set.seed(23)
     cell_file <- generate_data()
     sce <- loadData(cell_file)
-    sce <- transformLogScale(sce)
+    sce <- transformScale(sce)
 
     sce$Drug <- as.factor(sce$Drug)
     sce$Drug <- relevel(sce$Drug, ref = "D1")

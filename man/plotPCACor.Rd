@@ -33,7 +33,7 @@ Plot number of cells per image
 set.seed(23)
 cell_file <- generate_data()
 sce <- loadData(cell_file)
-sce <- transformLogScale(sce, robust = TRUE)
+sce <- transformScale(sce, robust = TRUE)
 sce <- scater::runPCA(sce, exprs_values = "tfmfeatures", ncomponents = 10)
 plotPCACor(sce, filter_by = 1)
 
