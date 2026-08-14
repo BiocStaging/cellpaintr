@@ -374,6 +374,7 @@ transformScale <- function(sce, robust = FALSE) {
     # correlation features
     corr_ids <- str_detect(rownames(mat), "_Correlation_")
     submat <- mat[corr_ids, ]
+    submat <- pmax(pmin(submat, 1), -1)
     submat <- atanh(submat)
     mat[corr_ids, ] <- submat
 
