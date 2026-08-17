@@ -37,11 +37,10 @@ generate_data <- function() {
     # parameters of distributions
     pois_lambda <- 10
     gamma_shape <- 1
-    norm_mean <- 1
 
     # effect size of drug perturbation
-    d7_shift <- 0.4
-    d8_shift <- 0.8
+    d7_shift <- 0.2
+    d8_shift <- 0.4
 
     # simulate meta data
     ObjectNumber <- seq(n_cells)
@@ -74,7 +73,7 @@ generate_data <- function() {
     texture <- names(df)[str_detect(names(df), "Texture_")]
     texture <- sample(texture, p)
     texture_mat <-
-        rnorm(n = n_cells * length(texture), mean = norm_mean) |>
+        rgamma(n = n_cells * length(texture), shape = gamma_shape) |>
         matrix(nrow = n_cells, ncol = length(texture)) |>
         as.data.frame()
     colnames(texture_mat) <- texture
