@@ -448,6 +448,104 @@ transformScale <- function(sce, robust = FALSE) {
     sce
 }
 
+#' Remove row and column effect using the median polish procedure
+#'
+#' @importFrom SummarizedExperiment assay assay<-
+#' @importFrom stats qlogis qnorm medpolish
+#' @importFrom scrapper aggregateAcrossCells
+#' @importFrom tidyr pivot_wider
+#' @importFrom cli cli_abort
+#' @importFrom dplyr left_join select
+#' @export
+#'
+#' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#' @param robust If true robust z-score, otherwise standard z-score
+#' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#'
+#' @examples
+#' set.seed(23)
+#' cell_file <- generate_data()
+#' sce <- loadData(cell_file)
+#' sce <- transformScale(sce)
+#' row <- substr(sce$Well, 1, 1)
+#' row <- factor(row, levels = LETTERS[1:length(unique(row))])
+#' col <- substr(sce$Well, 2, 3)
+#' col <- factor(as.numeric(col))
+#' sce$Row <- row
+#' sce$Col <- col
+#' sce <- removeRowColEffect(sce)
+#'
+removeRowColEffect <- function(sce,
+                               assay_type = "tfmfeatures") {
+    # check input
+    if (!is.factor(sce$Col)) {
+        cli::cli_abort(c(
+            "'Col' in {.code colData(sce)$Col} must be a factor",
+            "x" = "You've supplied a {.cls {class(sce$Col)}}."
+        ))
+    }
+    if (!is.factor(sce$Row)) {
+        cli::cli_abort(c(
+            "'Row' in {.code colData(sce)$Row} must be a factor",
+            "x" = "You've supplied a {.cls {class(sce$Row)}}."
+        ))
+    }
+
+    # retrieve count matrix
+    mat <- assay(sce, assay_type)
+
+    # get group index
+    aggr <- scrapper::aggregateAcrossCells(
+        assay(sce, assay_type),
+        factors = colData(sce)[, c("Col", "Row")]
+    )
+
+    # calculate median per well
+    idx <- aggr$index
+    mat_well <- assay(sce, assay_type)
+    mat_well <- t(apply(mat_well, 1, function(x) tapply(x, idx, median)))
+
+    # loop over all features
+    corrected <- mat
+    for (feature_ind in seq_len(nrow(sce))) {
+        # convert to matrix
+        df_plate_layout_well <- data.frame(
+            feature = mat_well[feature_ind, ],
+            aggr$combinations
+        )
+        row_col_well_mat <- df_plate_layout_well |>
+            pivot_wider(names_from = Col, values_from = feature) |>
+            select(-Row) |>
+            as.matrix()
+        # NAs occur if no cells are in a well: setting NAs to zero
+        row_col_well_mat[is.na(row_col_well_mat)] <- 0
+        med <- medpolish(row_col_well_mat, trace.iter = FALSE)
+
+        # subtract medians from full sce object
+        df_plate_layout_full <- data.frame(
+            feature = mat[feature_ind, ],
+            colData(sce)[, c("Col", "Row")]
+        )
+        df_row <- data.frame(Row = levels(sce$Row), row_median = med$row)
+        df_col <- data.frame(Col = levels(sce$Col), col_median = med$col)
+        df_sce <-
+            df_plate_layout_full |>
+            left_join(df_row, by = join_by(Row)) |>
+            left_join(df_col, by = join_by(Col)) |>
+            mutate(overall_median = med$overall) |>
+            mutate(
+                corrected = feature - overall_median - row_median - col_median
+            )
+
+        # subtract the overall, row, and column medians
+        corrected[feature_ind, ] <- df_sce$corrected
+    }
+
+    # save in sce object
+    assay(sce, "corrected") <- corrected
+    sce
+}
+
 #' Internal function to compute y_hat on a subset of the features
 #'
 #' @importFrom SummarizedExperiment assay

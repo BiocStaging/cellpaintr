@@ -43,7 +43,8 @@ Imports:
     scrapper,
     tibble,
     tidyr,
-    ggrepel
+    ggrepel,
+    cli
 Depends:
     R (>= 4.5.0),
     SummarizedExperiment,
