@@ -365,11 +365,31 @@ removeZeroInflation <- function(sce, proportion = 0.2) {
 transformScale <- function(sce, robust = FALSE) {
     mat <- assay(sce, "features")
 
-    # count features
-    count_ids <- str_detect(rownames(mat), "Correlation_K_")
-    submat <- mat[count_ids, ]
+    # variance features
+    var_ids <- str_detect(
+        rownames(mat),
+        paste(
+            c(
+                "Correlation_K_",
+                "Variance_",
+                "Contrast",
+                "MeanIntensity",
+                "StdIntensity",
+                "IntegratedIntensity",
+                "SumAverage",
+                "MedianIntensity",
+                "MADIntensity",
+                "UpperQuartileIntensity",
+                "LowerQuartileIntensity",
+                "MaxIntensity",
+                "MinIntensity"
+            ),
+            collapse = "|"
+        )
+    )
+    submat <- mat[var_ids, ]
     submat <- log(submat)
-    mat[count_ids, ] <- submat
+    mat[var_ids, ] <- submat
 
     # correlation features
     corr_ids <- str_detect(rownames(mat), "_Correlation_")
@@ -384,7 +404,7 @@ transformScale <- function(sce, robust = FALSE) {
     submat <- qlogis(submat)
     mat[prop_ids, ] <- submat
 
-    # proportion features with inflation at 1
+    # extreme value features
     prop_ids <- str_detect(
         rownames(mat),
         "Correlation_Costes_|Correlation_Manders_"
