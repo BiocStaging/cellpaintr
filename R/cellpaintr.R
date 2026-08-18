@@ -387,6 +387,7 @@ transformScale <- function(sce, robust = FALSE) {
         )
     )
     submat <- mat[var_ids, ]
+    submat <- pmax(submat, 0)
     submat <- log(submat)
     mat[var_ids, ] <- submat
 
@@ -400,6 +401,7 @@ transformScale <- function(sce, robust = FALSE) {
     # proportion features
     prop_ids <- str_detect(rownames(mat), "Texture_AngularSecondMoment_")
     submat <- mat[prop_ids, ]
+    submat <- pmax(pmin(submat, 1), 0)
     submat <- qlogis(submat)
     mat[prop_ids, ] <- submat
 
