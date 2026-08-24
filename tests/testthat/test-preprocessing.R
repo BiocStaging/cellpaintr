@@ -52,3 +52,32 @@ test_that("remove zero inflation features", {
 
     expect_disjoint("AreaShape_Zernike_2_2", rownames(sce))
 })
+
+test_that("remove row and col effects", {
+  set.seed(23)
+  cell_file <- generate_data()
+  sce <- loadData(cell_file)
+  sce <- transformScale(sce)
+
+  # check input
+  expect_error(
+    removeRowColEffect(sce),
+    "'Col' in `colData\\(sce\\)\\$Col` must be a factor"
+  )
+  col <- substr(sce$Well, 2, 3)
+  col <- factor(as.numeric(col))
+  sce$Col <- col
+  expect_error(
+    removeRowColEffect(sce),
+    "'Row' in `colData\\(sce\\)\\$Row` must be a factor"
+  )
+
+  # check run
+  row <- substr(sce$Well, 1, 1)
+  row <- factor(row, levels = LETTERS[1:length(unique(row))])
+  sce$Row <- row
+  sce_corrected <- removeRowColEffect(sce)
+  expect_s4_class(sce_corrected, "SingleCellExperiment")
+  expect_true("corrected" %in% assayNames(sce_corrected))
+  expect_equal(dim(sce_corrected), dim(sce))
+})
