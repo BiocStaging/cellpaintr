@@ -9,7 +9,7 @@ removeRowColEffect(sce, assay_type = "tfmfeatures")
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{robust}{If true robust z-score, otherwise standard z-score}
+\item{assay_type}{A string specifying the assay}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object

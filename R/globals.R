@@ -21,5 +21,11 @@ utils::globalVariables(c(
     "specificity",
     "str_starts",
     "value",
-    "var"
+    "var",
+    "Col",
+    "Row",
+    "feature",
+    "overall_median",
+    "row_median",
+    "col_median"
 ))

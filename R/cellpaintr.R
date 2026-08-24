@@ -456,11 +456,11 @@ transformScale <- function(sce, robust = FALSE) {
 #' @importFrom scrapper aggregateAcrossCells
 #' @importFrom tidyr pivot_wider
 #' @importFrom cli cli_abort
-#' @importFrom dplyr left_join select
+#' @importFrom dplyr left_join select join_by
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param robust If true robust z-score, otherwise standard z-score
+#' @param assay_type A string specifying the assay
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'
 #' @examples
