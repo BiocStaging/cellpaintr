@@ -946,6 +946,15 @@ score_statistics <- function(sce,
 
 #' Internal function to list relabelings of whole patients
 #'
+#' If `symmetric`, swapping the levels of all patients gives another valid
+#' relabeling. It turns every score into one minus the score and exchanges
+#' the two levels, so it leaves the statistic unchanged for a learner that
+#' treats the two levels alike. The relabelings then come in pairs with the
+#' same statistic, and only those that keep the labels of one patient are
+#' listed: the first patient in a paired or unpaired design, and the first
+#' patient with both levels in a mixed design. They form a subgroup of all
+#' relabelings, so the test stays exact for any learner, at half the cost.
+#'
 #' @importFrom utils combn
 #'
 #' @param design Either "paired", "unpaired", or "mixed"
@@ -954,6 +963,7 @@ score_statistics <- function(sce,
 #' @param exact Enumerate all relabelings instead of sampling them
 #' @param n_permutations Number of random relabelings if not exact
 #' @param both Logical vector of patients with both levels (mixed design)
+#' @param symmetric Keep the labels of one patient fixed
 #' @return Logical matrix with one row per relabeling, the observed labels
 #'   excluded, and one column per patient: patients whose two levels are
 #'   swapped (paired design, and patients with both levels in a mixed
@@ -962,28 +972,51 @@ score_statistics <- function(sce,
 #' @noRd
 #'
 patient_relabelings <- function(design, n, observed, exact, n_permutations,
-                                both = NULL) {
+                                both = NULL, symmetric = FALSE) {
     if (design == "mixed") {
-        return(mixed_relabelings(observed, both, exact, n_permutations))
-    }
-    if (design == "paired") {
-        if (exact) {
-            grid <- as.matrix(expand.grid(rep(list(c(FALSE, TRUE)), n)))
-            return(unname(grid[-1, , drop = FALSE]))
-        }
-        return(matrix(
-            sample(c(FALSE, TRUE), n_permutations * n, replace = TRUE),
-            nrow = n_permutations
+        return(mixed_relabelings(
+            observed, both, exact, n_permutations, symmetric
         ))
     }
-    n_interest <- sum(observed)
+    if (design == "paired") {
+        # swaps of the free patients; the first one keeps its labels if
+        # symmetric
+        free <- if (symmetric) seq_len(n)[-1] else seq_len(n)
+        grid <- matrix(FALSE,
+            nrow = if (exact) 2^length(free) else n_permutations, ncol = n
+        )
+        grid[, free] <- if (exact) {
+            as.matrix(expand.grid(rep(list(c(FALSE, TRUE)), length(free))))
+        } else {
+            sample(c(FALSE, TRUE), n_permutations * length(free),
+                replace = TRUE
+            )
+        }
+        if (exact) {
+            grid <- grid[-1, , drop = FALSE]
+        }
+        return(unname(grid))
+    }
+    # unpaired: the first patient keeps its level if symmetric
+    free <- if (symmetric) seq_len(n)[-1] else seq_len(n)
+    n_free_interest <- sum(observed[free])
+    grid <- matrix(observed, nrow = 1, ncol = n)
     if (exact) {
-        subsets <- combn(n, n_interest)
-        grid <- t(apply(subsets, 2, function(subset) seq_len(n) %in% subset))
+        assignments <- all_subsets(length(free), n_free_interest)
+        grid <- grid[rep(1, nrow(assignments)), , drop = FALSE]
+        grid[, free] <- assignments
         is_observed <- apply(grid, 1, function(row) all(row == observed))
         return(grid[!is_observed, , drop = FALSE])
     }
-    t(replicate(n_permutations, seq_len(n) %in% sample(n, n_interest)))
+    grid <- grid[rep(1, n_permutations), , drop = FALSE]
+    grid[, free] <- matrix(
+        replicate(
+            n_permutations,
+            seq_along(free) %in% sample(length(free), n_free_interest)
+        ),
+        ncol = length(free), byrow = TRUE
+    )
+    grid
 }
 
 #' Internal function to list all subsets of k out of m patients
@@ -1008,17 +1041,24 @@ all_subsets <- function(m, k) {
 #' @param both Logical vector of patients with both levels
 #' @param exact Enumerate all relabelings instead of sampling them
 #' @param n_permutations Number of random relabelings if not exact
+#' @param symmetric The first patient with both levels keeps its labels
 #' @return Logical matrix as returned by \code{patient_relabelings}
 #' @noRd
 #'
-mixed_relabelings <- function(observed, both, exact, n_permutations) {
+mixed_relabelings <- function(observed, both, exact, n_permutations,
+                              symmetric = FALSE) {
     single <- !both
-    n_both <- sum(both)
+    # patients with both levels that may swap them
+    free <- both
+    if (symmetric) {
+        free[which(both)[1]] <- FALSE
+    }
+    n_free <- sum(free)
     n_single <- sum(single)
     n_interest <- sum(observed[single])
     if (!exact) {
         grid <- matrix(FALSE, nrow = n_permutations, ncol = length(both))
-        grid[, both] <- sample(c(FALSE, TRUE), n_permutations * n_both,
+        grid[, free] <- sample(c(FALSE, TRUE), n_permutations * n_free,
             replace = TRUE
         )
         grid[, single] <- matrix(
@@ -1030,14 +1070,14 @@ mixed_relabelings <- function(observed, both, exact, n_permutations) {
         )
         return(grid)
     }
-    swaps <- as.matrix(expand.grid(rep(list(c(FALSE, TRUE)), n_both)))
+    swaps <- as.matrix(expand.grid(rep(list(c(FALSE, TRUE)), n_free)))
     assignments <- all_subsets(n_single, n_interest)
     index <- expand.grid(
         swap = seq_len(nrow(swaps)),
         assignment = seq_len(nrow(assignments))
     )
     grid <- matrix(FALSE, nrow = nrow(index), ncol = length(both))
-    grid[, both] <- swaps[index$swap, , drop = FALSE]
+    grid[, free] <- swaps[index$swap, , drop = FALSE]
     grid[, single] <- assignments[index$assignment, , drop = FALSE]
     is_observed <- !apply(grid[, both, drop = FALSE], 1, any) &
         apply(grid[, single, drop = FALSE], 1, function(row) {
@@ -1083,9 +1123,19 @@ permutation_pvalues <- function(sce, observed, settings, n_permutations) {
         design <- "mixed"
         n_total <- 2^sum(both) * choose(sum(!both), sum(in_interest & !both))
     }
+
+    # swapping the levels of all patients leaves the statistic unchanged; if
+    # this is a valid relabeling, one patient keeps its labels, which halves
+    # the relabelings without changing the test
+    single <- !both
+    symmetric <- 2 * sum(in_interest & single) == sum(single)
+    if (symmetric) {
+        n_total <- n_total / 2
+        fixed <- if (design == "mixed") which(both)[1] else 1
+    }
     exact <- n_total <= n_permutations + 1
     relabelings <- patient_relabelings(
-        design, n, in_interest, exact, n_permutations, both
+        design, n, in_interest, exact, n_permutations, both, symmetric
     )
     n_relabelings <- nrow(relabelings) + 1
     message(
@@ -1093,6 +1143,13 @@ permutation_pvalues <- function(sce, observed, settings, n_permutations) {
         " relabelings of ", n, " levels of '", group, "' (", design,
         " design); smallest attainable p-value 1/", n_relabelings, "."
     )
+    if (symmetric) {
+        message(
+            "'", ids[fixed], "' keeps its labels, because exchanging the ",
+            "two levels of '", target, "' in all levels of '", group,
+            "' at once gives the same statistic."
+        )
+    }
     if (design == "mixed") {
         message(
             "Levels of '", group, "' with cells of only one level of '",
@@ -1158,58 +1215,60 @@ permutation_pvalues <- function(sce, observed, settings, n_permutations) {
     )
 }
 
-#' Internal function for the p-value of the corrected t-test
+#' Internal function for the factor by which the t-statistic is divided
 #'
-#' One-sided paired t-test of the score differences `d` whose sample
-#' variance is increased by max(C, 0) / (n - 1), with C the sum of
-#' `a[p, q] * a[q, p]` over all p != q. Under the null hypothesis,
-#' var(d) + C / (n - 1) is unbiased for n times the variance of mean(d).
+#' `"corrected"`: if each score difference is a sum of pairwise interactions
+#' with the other patients, \eqn{d_p = \sum_{q \neq p} a_{pq}} with symmetric
+#' \eqn{a_{pq} = a_{qp}} uncorrelated across pairs and of mean zero, then two
+#' score differences have correlation \eqn{1/(n-1)}, and the t-statistic is
+#' too large by the factor \eqn{\sqrt{2(n-1)/(n-2)}}.
 #'
-#' @importFrom stats pt var
+#' `"nadeau_bengio"`: the corrected resampled t-test of Nadeau and Bengio
+#' (2003) multiplies the variance by \eqn{1 + J n_2 / n_1}; with \eqn{J = n}
+#' splits and one held-out patient per split, the t-statistic is divided by
+#' \eqn{\sqrt{(2n-1)/(n-1)}}, which assumes a correlation of \eqn{1/n}.
 #'
-#' @param d Score differences of the patients (interest minus reference)
-#' @param a Matrix of influences: `a[p, q]` is the change in `d[p]` when
-#'   patient q is also left out of training; the diagonal is ignored
-#' @return List with `pvalue` and `variance_ratio`, the corrected over the
-#'   uncorrected variance
+#' @param n Number of patients
+#' @param method Either `"corrected"` (at least three patients) or
+#'   `"nadeau_bengio"` (at least two patients)
+#' @return The factor by which the t-statistic is divided
 #' @noRd
 #'
-corrected_t <- function(d, a) {
-    n <- length(d)
-    cross <- sum((a * t(a))[row(a) != col(a)])
-    variance <- var(d) + max(cross, 0) / (n - 1)
-    pvalue <- if (is.finite(variance) && variance > 0) {
-        pt(mean(d) / sqrt(variance / n), n - 1, lower.tail = FALSE)
-    } else {
-        NA_real_
-    }
-    list(pvalue = pvalue, variance_ratio = variance / var(d))
+correction_factor <- function(n, method = c("corrected", "nadeau_bengio")) {
+    method <- match.arg(method)
+    switch(method,
+        corrected = sqrt(2 * (n - 1) / (n - 2)),
+        nadeau_bengio = sqrt((2 * n - 1) / (n - 1))
+    )
 }
 
-#' Internal function to compute corrected t-test p-values
+#' Internal function to compute p-values of a t-test with a correction factor
 #'
-#' For each feature group, refit the model without each pair of patients to
-#' obtain the influences of the patients on each other's score differences.
-#'
-#' @importFrom cli cli_abort cli_progress_bar cli_progress_update
-#' @importFrom cli cli_progress_done
-#' @importFrom SingleCellExperiment reducedDim
-#' @importFrom utils combn
+#' @importFrom cli cli_abort
+#' @importFrom stats pt
 #'
 #' @param sce Output of \code{\link{predictLOO}}
-#' @param settings Settings of \code{\link{predictLOO}} from its metadata
-#' @return List with p-values and variance ratios, one per feature group in
-#'   the order of the columns of \code{reducedDim(sce, "prevalidated")}
+#' @param observed Output of \code{score_statistics}
+#' @param target Name of target variable for prediction
+#' @param group Grouping variable for cross-validation, e.g., patient
+#' @param interest_level Factor interest level in `target` variable
+#' @param reference_level Factor reference level in `target` variable
+#' @param method Either `"corrected"` or `"nadeau_bengio"`
+#' @return Vector of p-values, one per row of `observed`
 #' @noRd
 #'
-corrected_pvalues <- function(sce, settings) {
-    target <- settings$target
-    group <- settings$group
-    interest_level <- settings$interest_level
-    reference_level <- settings$reference_level
+corrected_pvalues <- function(sce, observed, target, group,
+                              interest_level, reference_level,
+                              method = "corrected") {
+    name <- if (method == "corrected") {
+        "The corrected t-test"
+    } else {
+        "The Nadeau-Bengio t-test"
+    }
+    min_n <- if (method == "corrected") 3 else 2
     labels <- as.character(sce[[target]])
     patients <- as.character(sce[[group]])
-    ids <- sort(unique(patients))
+    ids <- sort(unique(patients[labels %in% c(interest_level, reference_level)]))
     n <- length(ids)
 
     paired <- vapply(ids, function(id) {
@@ -1218,73 +1277,19 @@ corrected_pvalues <- function(sce, settings) {
     if (!all(paired)) {
         cli_abort(c(
             paste(
-                "The corrected t-test needs a paired design, in which every",
+                "{name} needs a paired design, in which every",
                 "level of {.arg group} has cells of both levels of {.arg target}."
             ),
             "i" = "Levels with cells of one level only: {ids[!paired]}.",
             "i" = "Use {.code method = \"permutation\"} instead."
         ))
     }
-    if (n < 3) {
-        cli_abort("The corrected t-test needs at least three levels of {.arg group}.")
+    if (n < min_n) {
+        cli_abort("{name} needs at least {min_n} levels of {.arg group}.")
     }
-
-    score_difference <- function(score, in_patient) {
-        mean(score[in_patient & labels == interest_level]) -
-            mean(score[in_patient & labels == reference_level])
-    }
-
-    # feature groups in the order in which predictLOO() fitted them
-    feature_groups <- c("all", settings$types, settings$channels)
-    starts <- c(
-        TRUE, rep(TRUE, length(settings$types)),
-        rep(FALSE, length(settings$channels))
+    pt(observed$statistic / correction_factor(n, method), n - 1,
+        lower.tail = FALSE
     )
-    scores <- reducedDim(sce, "prevalidated")
-    if (ncol(scores) != length(feature_groups)) {
-        cli_abort("The prediction scores do not match the settings of {.fn predictLOO}.")
-    }
-
-    pairs <- combn(n, 2)
-    n_fits <- length(feature_groups) * ncol(pairs)
-    message(
-        "Corrected t-test with ", ncol(pairs), " leave-two-out fits per ",
-        "feature group for ", n, " levels of '", group, "' (", n_fits,
-        " fits in total)."
-    )
-    pvalue <- variance_ratio <- rep(NA_real_, length(feature_groups))
-    cli_progress_bar("Fitting leave-two-out models", total = n_fits)
-    for (k in seq_along(feature_groups)) {
-        d <- vapply(ids, function(id) score_difference(scores[, k], patients == id), 0)
-        ml_data <- group_data(feature_groups[k], sce, starts[k], target,
-            interest_level, reference_level, settings$assay_type
-        )
-        a <- matrix(0, n, n)
-        for (m in seq_len(ncol(pairs))) {
-            i <- pairs[1, m]
-            j <- pairs[2, m]
-            held_out <- patients %in% ids[c(i, j)]
-            train_ids <- which(!held_out)
-            test_ids <- which(held_out)
-            if (!is.null(settings$weights)) {
-                case_weights <- sce[[settings$weights]][train_ids]
-            } else {
-                case_weights <- NULL
-            }
-            score <- rep(NA_real_, length(patients))
-            score[test_ids] <- fit_predict(ml_data, train_ids, test_ids,
-                case_weights, settings$n_threads
-            )
-            a[i, j] <- d[i] - score_difference(score, patients == ids[i])
-            a[j, i] <- d[j] - score_difference(score, patients == ids[j])
-            cli_progress_update()
-        }
-        result <- corrected_t(d, a)
-        pvalue[k] <- result$pvalue
-        variance_ratio[k] <- result$variance_ratio
-    }
-    cli_progress_done()
-    list(pvalue = pvalue, variance_ratio = variance_ratio)
 }
 
 #' Test each feature group for a difference between two levels
@@ -1306,29 +1311,45 @@ corrected_pvalues <- function(sce, settings) {
 #' leave-one-out models are refitted with
 #' the settings of the call to \code{\link{predictLOO}}, and the p-value is
 #' the proportion of relabelings, the observed one included, with a statistic
-#' at least as large. If there are at most `n_permutations + 1` relabelings
-#' (\eqn{2^n} for \eqn{n} patients in a paired design), all of them are
-#' enumerated and the test is exact; otherwise, `n_permutations` relabelings
-#' are drawn at random. The smallest attainable p-value is one over the
-#' number of relabelings. Because all models are refitted for every
+#' at least as large. Exchanging the two levels in all patients at once turns
+#' every score into one minus the score and leaves the statistic unchanged,
+#' so relabelings come in pairs with the same statistic. Whenever this
+#' exchange is itself a relabeling (always in a paired design, and if the
+#' patients with one level are split evenly between the two levels
+#' otherwise), one patient keeps its labels, which halves the number of
+#' relabelings and refits without changing the test. If there are at most
+#' `n_permutations + 1` relabelings (\eqn{2^{n-1}} for \eqn{n} patients in a
+#' paired design), all of them are enumerated and the test is exact;
+#' otherwise, `n_permutations` relabelings are drawn at random. The smallest
+#' attainable p-value is one over the number of relabelings, \eqn{2^{1-n}}
+#' in a paired design. Because all models are refitted for every
 #' relabeling, the test takes that many times longer than
 #' \code{\link{predictLOO}}. Use \code{\link[base]{set.seed}} for
 #' reproducible results.
 #'
 #' With `method = "corrected"`, the p-value comes from a corrected paired
-#' t-test, which needs a paired design. The models of different held-out
-#' patients share most of their training data, which makes the score
-#' differences of different patients positively correlated, so the sample
-#' variance underestimates their variance. For every pair of patients, the
-#' corrected t-test refits the models without both of them, measures how much
-#' each of the two changes the other's score difference, and adds the
-#' products of these influences to the sample variance. Under the null
-#' hypothesis, the corrected variance is unbiased, and the test controls the
-#' type I error as the number of patients grows; for few patients it is
-#' approximate. It refits \eqn{n(n-1)/2} models per feature group for
-#' \eqn{n} patients, far fewer than the permutation test, and unlike the
-#' permutation test, it can reach small p-values with few patients. Use
-#' \code{\link[base]{set.seed}} for reproducible results.
+#' t-test, which needs a paired design with at least three patients. Each
+#' patient is in the training set of every other patient's model, which makes
+#' the score differences of different patients positively correlated, so the
+#' t-statistic is too large. If each score difference is a sum of pairwise
+#' interactions with the other patients, two score differences have
+#' correlation \eqn{1/(n-1)} for \eqn{n} patients, and the t-statistic is too
+#' large by the factor \eqn{\sqrt{2(n-1)/(n-2)}}. The corrected t-test
+#' divides the t-statistic by this factor and refers it to the t-distribution
+#' with \eqn{n-1} degrees of freedom. It needs no refits, and its p-values
+#' are not limited to multiples of \eqn{2^{1-n}}, but it is approximate.
+#'
+#' With `method = "nadeau_bengio"`, the t-statistic is divided instead by
+#' \eqn{\sqrt{(2n-1)/(n-1)}}, the factor of the corrected resampled t-test of
+#' Nadeau and Bengio (2003, Machine Learning 52:239-281) for \eqn{n} splits
+#' with one held-out patient each, which assumes a correlation of
+#' \eqn{1/n} instead of \eqn{1/(n-1)}. It corrects less and therefore has
+#' more power, which pays off if part of each score difference is independent
+#' of the other patients, for example noise from the random seeds of the
+#' forests. If the score differences consist mostly of pairwise interactions,
+#' it can exceed the nominal level with four to six patients, where
+#' `method = "corrected"` holds it. It needs a paired design with at least
+#' two patients and no refits.
 #'
 #' With `method = "t"`, the p-value comes from the t-distribution. This is
 #' fast but anti-conservative, because the score differences of different
@@ -1344,7 +1365,8 @@ corrected_pvalues <- function(sce, settings) {
 #' @param assay_type A string specifying the assay
 #' @param method Either `"permutation"` (default) for a permutation test that
 #'   relabels whole patients, `"corrected"` for the corrected paired t-test,
-#'   or `"t"` for p-values from the t-distribution
+#'   `"nadeau_bengio"` for the paired t-test with the correction of Nadeau
+#'   and Bengio, or `"t"` for p-values from the t-distribution
 #' @param n_permutations Largest number of relabelings besides the observed
 #'   labels; if there are more, this many are drawn at random
 #' @return \code{data.frame} with one row per feature group and the columns
@@ -1352,8 +1374,7 @@ corrected_pvalues <- function(sce, settings) {
 #'   `log2FoldChange` (log2 ratio of the mean scores of the interest and the
 #'   reference level). With the permutation test, the attribute
 #'   `relabelings` holds the number of relabelings, the observed one
-#'   included. With the corrected t-test, the attribute `variance_ratio`
-#'   holds, per feature group, the corrected over the uncorrected variance.
+#'   included.
 #'
 #' @examples
 #' set.seed(23)
@@ -1378,10 +1399,16 @@ corrected_pvalues <- function(sce, settings) {
 #'     n_permutations = 9
 #' )
 #'
-#' # corrected t-test: 15 leave-two-out fits for six patients
+#' # corrected t-test: no refits
 #' calculateStats(sce_single,
 #'     target = "Drug", group = "Patient",
 #'     method = "corrected"
+#' )
+#'
+#' # correction of Nadeau and Bengio: no refits, corrects less
+#' calculateStats(sce_single,
+#'     target = "Drug", group = "Patient",
+#'     method = "nadeau_bengio"
 #' )
 #'
 #' # p-values from the t-distribution: fast but anti-conservative
@@ -1394,7 +1421,10 @@ calculateStats <- function(sce,
                            target,
                            group,
                            assay_type = "tfmfeatures",
-                           method = c("permutation", "corrected", "t"),
+                           method = c(
+                               "permutation", "corrected",
+                               "nadeau_bengio", "t"
+                           ),
                            n_permutations = 999) {
     method <- match.arg(method)
     settings <- metadata(sce)$predictLOO
@@ -1421,24 +1451,22 @@ calculateStats <- function(sce,
     if (method == "t") {
         return(stats)
     }
+    if (method %in% c("corrected", "nadeau_bengio")) {
+        stats$pvalue <- corrected_pvalues(sce, observed, target, group,
+            interest_level, reference_level, method
+        )
+        return(stats)
+    }
 
     if (is.null(settings) || !identical(settings$target, target) ||
         !identical(settings$group, group)) {
         cli_abort(c(
-            "The {method} test refits the models of {.fn predictLOO}.",
+            "The permutation test refits the models of {.fn predictLOO}.",
             "i" = paste(
                 "Pass its output with the same {.arg target} and",
                 "{.arg group}, or use {.code method = \"t\"}."
             )
         ))
-    }
-    if (method == "corrected") {
-        corrected <- corrected_pvalues(sce, settings)
-        stats$pvalue <- corrected$pvalue
-        attr(stats, "variance_ratio") <- stats::setNames(
-            corrected$variance_ratio, stats$Feature
-        )
-        return(stats)
     }
     if (!is.numeric(n_permutations) || length(n_permutations) != 1 ||
         n_permutations < 1) {

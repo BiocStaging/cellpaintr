@@ -167,30 +167,50 @@ and computes a one-sided t-statistic per feature group.
 Its permutation test swaps the drug labels of whole patients,
 refits all leave-one-out models,
 and compares the observed statistic with those of all relabelings.
-With six patients, there are $2^6 = 64$ relabelings,
-so the smallest attainable p-value is 1/64,
-and the test refits the models 63 times.
+Swapping the drugs of all patients at once gives the same statistic,
+because every score becomes one minus the score,
+so one patient keeps its labels.
+With six patients, there are $2^5 = 32$ relabelings,
+so the smallest attainable p-value is 1/32,
+and the test refits the models 31 times.
 
 ```{r test-single-drug}
 stats <- calculateStats(sce_single, target = "Drug", group = "Patient")
 stats
 ```
 
-The corrected t-test is a faster alternative for paired designs.
+The corrected t-test is a fast alternative for paired designs.
 The scores of different held-out patients are correlated,
-because their models share most of their training patients,
-so the t-test underestimates the variance of the mean score difference.
-For every pair of patients, the corrected t-test refits the models without both of them
-and adds the influences of the two patients on each other to the variance.
-With six patients, it needs $6 \times 5 / 2 = 15$ fits per feature group instead of 63 refits of all models,
-and its p-values are not limited to multiples of 1/64.
-Unlike the permutation test, it is approximate for few patients.
+because each patient is in the training set of every other patient's model,
+so the t-statistic is too large.
+If each score difference is a sum of pairwise interactions with the other patients,
+it is too large by the factor $\sqrt{2(n-1)/(n-2)}$,
+or about 1.58 with six patients.
+The corrected t-test divides the t-statistic by this factor.
+It needs no refits,
+and its p-values are not limited to multiples of 1/32,
+but unlike the permutation test, it is approximate.
 
 ```{r test-corrected}
 stats_corrected <- calculateStats(sce_single,
     target = "Drug", group = "Patient", method = "corrected"
 )
 stats_corrected
+```
+
+The corrected t-test of Nadeau and Bengio (2003) is a second option without refits.
+It divides the t-statistic by $\sqrt{(2n-1)/(n-1)}$, about 1.48 with six patients,
+which assumes a slightly smaller correlation between the score differences.
+It corrects less and has more power,
+which pays off if part of each score difference is independent of the other patients,
+but with four to six patients it can exceed the nominal level
+when the score differences consist mostly of interactions between patients.
+
+```{r test-nadeau-bengio}
+stats_nadeau_bengio <- calculateStats(sce_single,
+    target = "Drug", group = "Patient", method = "nadeau_bengio"
+)
+stats_nadeau_bengio
 ```
 
 Summarize feature subgroups in a volcano plot.

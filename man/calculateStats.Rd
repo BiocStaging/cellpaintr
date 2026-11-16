@@ -9,7 +9,7 @@ calculateStats(
   target,
   group,
   assay_type = "tfmfeatures",
-  method = c("permutation", "corrected", "t"),
+  method = c("permutation", "corrected", "nadeau_bengio", "t"),
   n_permutations = 999
 )
 }
@@ -24,7 +24,8 @@ calculateStats(
 
 \item{method}{Either `"permutation"` (default) for a permutation test that
 relabels whole patients, `"corrected"` for the corrected paired t-test,
-or `"t"` for p-values from the t-distribution}
+`"nadeau_bengio"` for the paired t-test with the correction of Nadeau
+and Bengio, or `"t"` for p-values from the t-distribution}
 
 \item{n_permutations}{Largest number of relabelings besides the observed
 labels; if there are more, this many are drawn at random}
@@ -35,8 +36,7 @@ labels; if there are more, this many are drawn at random}
   `log2FoldChange` (log2 ratio of the mean scores of the interest and the
   reference level). With the permutation test, the attribute
   `relabelings` holds the number of relabelings, the observed one
-  included. With the corrected t-test, the attribute `variance_ratio`
-  holds, per feature group, the corrected over the uncorrected variance.
+  included.
 }
 \description{
 Average the leave-one-out prediction scores of \code{\link{predictLOO}}
@@ -57,29 +57,45 @@ the other patients are permuted among them. For each relabeling, all
 leave-one-out models are refitted with
 the settings of the call to \code{\link{predictLOO}}, and the p-value is
 the proportion of relabelings, the observed one included, with a statistic
-at least as large. If there are at most `n_permutations + 1` relabelings
-(\eqn{2^n} for \eqn{n} patients in a paired design), all of them are
-enumerated and the test is exact; otherwise, `n_permutations` relabelings
-are drawn at random. The smallest attainable p-value is one over the
-number of relabelings. Because all models are refitted for every
+at least as large. Exchanging the two levels in all patients at once turns
+every score into one minus the score and leaves the statistic unchanged,
+so relabelings come in pairs with the same statistic. Whenever this
+exchange is itself a relabeling (always in a paired design, and if the
+patients with one level are split evenly between the two levels
+otherwise), one patient keeps its labels, which halves the number of
+relabelings and refits without changing the test. If there are at most
+`n_permutations + 1` relabelings (\eqn{2^{n-1}} for \eqn{n} patients in a
+paired design), all of them are enumerated and the test is exact;
+otherwise, `n_permutations` relabelings are drawn at random. The smallest
+attainable p-value is one over the number of relabelings, \eqn{2^{1-n}}
+in a paired design. Because all models are refitted for every
 relabeling, the test takes that many times longer than
 \code{\link{predictLOO}}. Use \code{\link[base]{set.seed}} for
 reproducible results.
 
 With `method = "corrected"`, the p-value comes from a corrected paired
-t-test, which needs a paired design. The models of different held-out
-patients share most of their training data, which makes the score
-differences of different patients positively correlated, so the sample
-variance underestimates their variance. For every pair of patients, the
-corrected t-test refits the models without both of them, measures how much
-each of the two changes the other's score difference, and adds the
-products of these influences to the sample variance. Under the null
-hypothesis, the corrected variance is unbiased, and the test controls the
-type I error as the number of patients grows; for few patients it is
-approximate. It refits \eqn{n(n-1)/2} models per feature group for
-\eqn{n} patients, far fewer than the permutation test, and unlike the
-permutation test, it can reach small p-values with few patients. Use
-\code{\link[base]{set.seed}} for reproducible results.
+t-test, which needs a paired design with at least three patients. Each
+patient is in the training set of every other patient's model, which makes
+the score differences of different patients positively correlated, so the
+t-statistic is too large. If each score difference is a sum of pairwise
+interactions with the other patients, two score differences have
+correlation \eqn{1/(n-1)} for \eqn{n} patients, and the t-statistic is too
+large by the factor \eqn{\sqrt{2(n-1)/(n-2)}}. The corrected t-test
+divides the t-statistic by this factor and refers it to the t-distribution
+with \eqn{n-1} degrees of freedom. It needs no refits, and its p-values
+are not limited to multiples of \eqn{2^{1-n}}, but it is approximate.
+
+With `method = "nadeau_bengio"`, the t-statistic is divided instead by
+\eqn{\sqrt{(2n-1)/(n-1)}}, the factor of the corrected resampled t-test of
+Nadeau and Bengio (2003, Machine Learning 52:239-281) for \eqn{n} splits
+with one held-out patient each, which assumes a correlation of
+\eqn{1/n} instead of \eqn{1/(n-1)}. It corrects less and therefore has
+more power, which pays off if part of each score difference is independent
+of the other patients, for example noise from the random seeds of the
+forests. If the score differences consist mostly of pairwise interactions,
+it can exceed the nominal level with four to six patients, where
+`method = "corrected"` holds it. It needs a paired design with at least
+two patients and no refits.
 
 With `method = "t"`, the p-value comes from the t-distribution. This is
 fast but anti-conservative, because the score differences of different
@@ -108,10 +124,16 @@ calculateStats(sce_single,
     n_permutations = 9
 )
 
-# corrected t-test: 15 leave-two-out fits for six patients
+# corrected t-test: no refits
 calculateStats(sce_single,
     target = "Drug", group = "Patient",
     method = "corrected"
+)
+
+# correction of Nadeau and Bengio: no refits, corrects less
+calculateStats(sce_single,
+    target = "Drug", group = "Patient",
+    method = "nadeau_bengio"
 )
 
 # p-values from the t-distribution: fast but anti-conservative

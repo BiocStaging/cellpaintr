@@ -14,6 +14,28 @@
 
 - Submitted to Bioconductor
 
+# cellpaintr 0.99.7
+
+- The corrected t-test of `calculateStats()` (`method = "corrected"`) now
+  divides the paired t-statistic by sqrt(2(n-1)/(n-2)), the factor by which
+  it is too large if each score difference is a sum of pairwise interactions
+  with the other patients. It needs no refits and no longer needs the
+  settings of `predictLOO()`. It replaces the leave-two-out variance
+  correction of 0.99.6 and its attribute `variance_ratio`.
+- `calculateStats()` offers the correction of the corrected resampled t-test
+  of Nadeau and Bengio (2003) (`method = "nadeau_bengio"`), which divides
+  the paired t-statistic by sqrt((2n-1)/(n-1)). It corrects less than
+  `method = "corrected"` and needs a paired design with at least two
+  patients and no refits.
+- The permutation test of `calculateStats()` no longer refits relabelings
+  that only repeat another one. Exchanging the two levels in all patients at
+  once turns every score into one minus the score and leaves the statistic
+  unchanged, so one patient now keeps its labels whenever this exchange is
+  itself a relabeling (always in a paired design). This halves the number
+  of refits, and the test stays exact. In a paired design with n patients,
+  there are 2^(n-1) relabelings, and the smallest attainable p-value is
+  2^(1-n) instead of a nominal 2^-n that depended on the forest seeds.
+
 # cellpaintr 0.99.6
 
 - `calculateStats()` offers a corrected paired t-test

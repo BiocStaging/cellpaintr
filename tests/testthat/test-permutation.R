@@ -35,16 +35,17 @@ test_that("permutation test enumerates all swaps in a paired design", {
     sce_single <- fit_loo(sce[, sce$Patient %in% c("P1", "P2", "P3")])
     expect_message(
         stats <- calculateStats(sce_single, target = "Drug", group = "Patient"),
-        "all 8 relabelings"
+        "all 4 relabelings"
     )
 
     expect_setequal(
         colnames(stats),
         c("Target", "Feature", "pvalue", "log2FoldChange")
     )
-    expect_equal(attr(stats, "relabelings"), 8)
-    expect_true(on_grid(stats$pvalue, 8))
-    expect_gte(min(stats$pvalue), 1 / 8)
+    # P1 keeps its labels, so 2^(3 - 1) relabelings
+    expect_equal(attr(stats, "relabelings"), 4)
+    expect_true(on_grid(stats$pvalue, 4))
+    expect_gte(min(stats$pvalue), 1 / 4)
     expect_lte(max(stats$pvalue), 1)
 })
 
@@ -52,11 +53,11 @@ test_that("permutation test samples swaps when there are too many", {
     sce <- simulate_sce()
     sce_single <- fit_loo(sce[, sce$Patient %in% c("P1", "P2", "P3")])
     stats <- suppressMessages(calculateStats(sce_single,
-        target = "Drug", group = "Patient", n_permutations = 4
+        target = "Drug", group = "Patient", n_permutations = 2
     ))
 
-    expect_equal(attr(stats, "relabelings"), 5)
-    expect_true(on_grid(stats$pvalue, 5))
+    expect_equal(attr(stats, "relabelings"), 3)
+    expect_true(on_grid(stats$pvalue, 3))
 })
 
 test_that("permutation test permutes patients in an unpaired design", {
@@ -69,8 +70,9 @@ test_that("permutation test permutes patients in an unpaired design", {
         "unpaired design"
     )
 
-    expect_equal(attr(stats, "relabelings"), choose(4, 2))
-    expect_true(on_grid(stats$pvalue, 6))
+    # two levels per side, so P1 keeps its level: choose(3, 1) relabelings
+    expect_equal(attr(stats, "relabelings"), choose(3, 1))
+    expect_true(on_grid(stats$pvalue, 3))
 })
 
 test_that("permutation test handles mixed designs", {
@@ -85,9 +87,9 @@ test_that("permutation test handles mixed designs", {
         "mixed design"
     )
 
-    # P2 and P3 keep or swap their levels, and either P1 or P4 gets D8
-    expect_equal(attr(stats, "relabelings"), 2^2 * choose(2, 1))
-    expect_true(on_grid(stats$pvalue, 8))
+    # P3 keeps or swaps its levels, P2 keeps them, and either P1 or P4 gets D8
+    expect_equal(attr(stats, "relabelings"), 2 * choose(2, 1))
+    expect_true(on_grid(stats$pvalue, 4))
 })
 
 test_that("permutation test samples relabelings in mixed designs", {
@@ -101,6 +103,82 @@ test_that("permutation test samples relabelings in mixed designs", {
 
     expect_equal(attr(stats, "relabelings"), 3)
     expect_true(on_grid(stats$pvalue, 3))
+})
+
+test_that("relabelings keep one patient fixed when exchanging all is one", {
+    # paired: the first patient never swaps, and the observed labels are left out
+    grid <- patient_relabelings("paired", 4, rep(TRUE, 4),
+        exact = TRUE, n_permutations = 100, symmetric = TRUE
+    )
+    expect_equal(nrow(grid), 2^3 - 1)
+    expect_false(any(grid[, 1]))
+    expect_false(any(duplicated(grid)))
+    expect_true(all(rowSums(grid) > 0))
+    sampled <- patient_relabelings("paired", 4, rep(TRUE, 4),
+        exact = FALSE, n_permutations = 50, symmetric = TRUE
+    )
+    expect_false(any(sampled[, 1]))
+
+    # without symmetry all 2^n swaps are listed
+    grid <- patient_relabelings("paired", 4, rep(TRUE, 4),
+        exact = TRUE, n_permutations = 100, symmetric = FALSE
+    )
+    expect_equal(nrow(grid), 2^4 - 1)
+
+    # unpaired with two patients per level: the first patient keeps its level
+    observed <- c(FALSE, TRUE, FALSE, TRUE)
+    grid <- patient_relabelings("unpaired", 4, observed,
+        exact = TRUE, n_permutations = 100, symmetric = TRUE
+    )
+    expect_equal(nrow(grid), choose(3, 2) - 1)
+    expect_true(all(grid[, 1] == observed[1]))
+    expect_true(all(rowSums(grid) == 2))
+    sampled <- patient_relabelings("unpaired", 4, observed,
+        exact = FALSE, n_permutations = 50, symmetric = TRUE
+    )
+    expect_true(all(sampled[, 1] == observed[1]))
+    expect_true(all(rowSums(sampled) == 2))
+
+    # mixed: the first patient with both levels never swaps
+    both <- c(FALSE, TRUE, TRUE, FALSE)
+    observed <- c(FALSE, TRUE, TRUE, TRUE)
+    grid <- patient_relabelings("mixed", 4, observed,
+        exact = TRUE, n_permutations = 100, both = both, symmetric = TRUE
+    )
+    expect_equal(nrow(grid), 2 * choose(2, 1) - 1)
+    expect_false(any(grid[, 2]))
+})
+
+test_that("exchanging the levels in all patients keeps the statistic", {
+    sce <- simulate_sce()
+    sce_single <- fit_loo(sce[, sce$Patient %in% c("P1", "P2", "P3", "P4")])
+    settings <- S4Vectors::metadata(sce_single)$predictLOO
+    swapped <- sce_single
+    swapped$Drug <- factor(
+        ifelse(swapped$Drug == "D8", "D1", "D8"),
+        levels = levels(swapped$Drug)
+    )
+    refit <- do.call(
+        predictLOO,
+        c(list(sce = swapped), settings, list(progress = FALSE))
+    )
+    statistic <- function(x) {
+        score_statistics(x, "Drug", "Patient", settings$assay_type,
+            "D8", "D1"
+        )$statistic
+    }
+    refit_same <- do.call(
+        predictLOO,
+        c(list(sce = sce_single), settings, list(progress = FALSE))
+    )
+
+    # the exchange differs from the observed labels by no more than a refit
+    # with a new forest seed does
+    noise <- abs(statistic(refit_same) - statistic(sce_single))
+    expect_lte(
+        abs(statistic(refit) - statistic(sce_single)),
+        max(3 * noise, 0.1 * abs(statistic(sce_single)))
+    )
 })
 
 test_that("permutation test needs the settings of predictLOO", {
