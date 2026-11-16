@@ -1,7 +1,7 @@
 # small designs keep the number of refits low
 simulate_sce <- function() {
     set.seed(23)
-    cell_file <- generate_data()
+    cell_file <- generateData()
     sce <- loadData(cell_file)
     sce <- transformScale(sce)
     sce$Drug <- relevel(as.factor(sce$Drug), ref = "D1")
@@ -106,7 +106,8 @@ test_that("permutation test samples relabelings in mixed designs", {
 })
 
 test_that("relabelings keep one patient fixed when exchanging all is one", {
-    # paired: the first patient never swaps, and the observed labels are left out
+    # paired: the first patient never swaps, and the observed labels are
+    # left out
     grid <- patient_relabelings("paired", 4, rep(TRUE, 4),
         exact = TRUE, n_permutations = 100, symmetric = TRUE
     )
@@ -151,34 +152,32 @@ test_that("relabelings keep one patient fixed when exchanging all is one", {
 
 test_that("exchanging the levels in all patients keeps the statistic", {
     sce <- simulate_sce()
-    sce_single <- fit_loo(sce[, sce$Patient %in% c("P1", "P2", "P3", "P4")])
-    settings <- S4Vectors::metadata(sce_single)$predictLOO
-    swapped <- sce_single
+    sce <- sce[, sce$Patient %in% c("P1", "P2", "P3", "P4")]
+    swapped <- sce
     swapped$Drug <- factor(
-        ifelse(swapped$Drug == "D8", "D1", "D8"),
-        levels = levels(swapped$Drug)
-    )
-    refit <- do.call(
-        predictLOO,
-        c(list(sce = swapped), settings, list(progress = FALSE))
-    )
-    statistic <- function(x) {
-        score_statistics(x, "Drug", "Patient", settings$assay_type,
-            "D8", "D1"
-        )$statistic
-    }
-    refit_same <- do.call(
-        predictLOO,
-        c(list(sce = sce_single), settings, list(progress = FALSE))
+        ifelse(sce$Drug == "D8", "D1", ifelse(
+            sce$Drug == "D1", "D8", as.character(sce$Drug)
+        )),
+        levels = levels(sce$Drug)
     )
 
-    # the exchange differs from the observed labels by no more than a refit
-    # with a new forest seed does
-    noise <- abs(statistic(refit_same) - statistic(sce_single))
-    expect_lte(
-        abs(statistic(refit) - statistic(sce_single)),
-        max(3 * noise, 0.1 * abs(statistic(sce_single)))
+    # with the same forest seeds, the splits are the same because the Gini
+    # impurity treats the two levels alike, so every score becomes one minus
+    # the score and every score difference stays the same
+    set.seed(7)
+    observed <- fit_loo(sce)
+    set.seed(7)
+    exchanged <- fit_loo(swapped)
+    expect_equal(
+        reducedDim(exchanged, "prevalidated"),
+        1 - reducedDim(observed, "prevalidated")
     )
+    statistic <- function(x) {
+        score_statistics(
+            x, "Drug", "Patient", "tfmfeatures", "D8", "D1"
+        )$statistic
+    }
+    expect_equal(statistic(exchanged), statistic(observed))
 })
 
 test_that("permutation test needs the settings of predictLOO", {

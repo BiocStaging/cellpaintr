@@ -4,14 +4,17 @@
 \alias{removeLowVariance}
 \title{Filter low variance features}
 \usage{
-removeLowVariance(sce, threshold = 0, robust = FALSE)
+removeLowVariance(sce, threshold = 0, robust = FALSE, assay_type = "features")
 }
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{threshold}{Keep features that have larger variance than this threshold}
+\item{threshold}{numeric(1), keep features whose spread exceeds it}
 
-\item{robust}{If true use median absolute deviation, otherwise use variance}
+\item{robust}{logical(1), if \code{TRUE} the spread is the median absolute
+deviation, otherwise the variance}
+
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -21,7 +24,7 @@ Filter low variance features
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- removeLowVariance(sce)
 

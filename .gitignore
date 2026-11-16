@@ -2,3 +2,9 @@
 .Rproj.user
 .Rhistory
 docs
+# local development environment, not part of the package
+.Rprofile
+*.Rproj
+renv/
+renv.lock
+Rplots.pdf

@@ -16,11 +16,14 @@ volcanoPlot(
 )
 }
 \arguments{
-\item{sce}{A \code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
+\item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{target}{Name of target variable for prediction}
+\item{target}{character(1), name of the column of \code{colData(sce)}
+with the condition of each cell, such as the drug}
 
-\item{group}{Grouping variable for cross-validation, e.g., patient}
+\item{group}{character(1), name of the column of \code{colData(sce)}
+with the replicate of each cell, such as the patient; the replicates
+are the folds of the leave-one-out cross-validation}
 
 \item{p_cutoff}{Cut-off for statistical significance. A horizontal line
 will be drawn at -log10(p_cutoff). Defaults to 0.01
@@ -32,7 +35,7 @@ over the number of relabelings.}
 \item{fc_cutoff}{Cut-off for absolute log2 fold-change. A vertical lines
 will be drawn at fc_cutoff.}
 
-\item{assay_type}{A string specifying the assay}
+\item{assay_type}{character(1), name of the assay with the features}
 
 \item{stats}{Output of \code{\link{calculateStats}}; if `NULL`, it is
 computed from `sce`}
@@ -48,7 +51,7 @@ Plot predicted leave-one-out probabilities
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce)
 

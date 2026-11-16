@@ -4,22 +4,31 @@
 \alias{transformScale}
 \title{Transform, center, and scale features}
 \usage{
-transformScale(sce, robust = FALSE)
+transformScale(sce, robust = FALSE, assay_type = "features")
 }
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{robust}{If true robust z-score, otherwise standard z-score}
+\item{robust}{logical(1), if \code{TRUE} robust z-scores (median and
+median absolute deviation), otherwise standard z-scores}
+
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+  with the transformed features in the new assay \code{"tfmfeatures"}
 }
 \description{
-Transform, center, and scale features
+Transforms each family of CellProfiler features to an approximately
+unbounded, symmetric scale (logarithm for intensities and
+dispersion-type texture measures, Fisher's z for correlations, logit for
+proportions, and a rank-based inverse normal transformation for
+thresholded colocalization coefficients), caps infinite values at the
+finite extremes of each feature, and standardizes every feature.
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce)
 

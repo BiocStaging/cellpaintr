@@ -15,10 +15,22 @@ Authors@R: c(
     person("European League Against Rheumatism", role = "fnd"),
     person("Swiss National Science Foundation", role = "fnd")
     )
-Description: This package load cell painting data into R and 
-    preprocess feature to make them ready for machine learning. 
-    We use random forest to predict cell perturbations from 
-    CellProfiler features. We summarize the results in a volcano plot.
+Description: cellpaintr tests whether a perturbation, such as a drug,
+    changes the morphology of cells in Cell Painting experiments with few
+    biological replicates, such as patient-derived cells from a handful of
+    donors. It reads the per-cell measurement tables that CellProfiler
+    exports (for example MyExpt_Cells.csv with image metadata columns) into
+    a SingleCellExperiment, removes poor cells and features, transforms and
+    scales the features, and corrects plate row and column effects. It then
+    learns on cells and tests on replicates: a random forest trained on the
+    cells of all other replicates scores the cells of each held-out
+    replicate, and an exact permutation test or a corrected paired t-test
+    compares the scores between conditions, for all features and for feature
+    groups such as measurement types or imaging channels. Unlike profiling
+    pipelines such as pycytominer, which aggregate cells into well-level
+    profiles and compare their similarity, cellpaintr trains on single cells,
+    so changes in a subpopulation or in the shape of a feature distribution
+    contribute to the test.
 biocViews: 
     SingleCell,
     Software,
@@ -30,7 +42,7 @@ License: LGPL-3
 Encoding: UTF-8
 LazyData: false
 Config/testthat/edition: 3
-Imports: 
+Imports:
     ggplot2,
     readr,
     stringr,
@@ -46,6 +58,11 @@ Imports:
     ggrepel,
     cli,
     S4Vectors,
+    MatrixGenerics,
+    future.apply,
+    rlang,
+    methods,
+    stats,
     utils
 Depends:
     R (>= 4.5.0),
@@ -57,7 +74,7 @@ Suggests:
     testthat (>= 3.0.0),
     BiocStyle,
     scater,
-    rlang
+    future
 VignetteBuilder: knitr
 Config/roxygen2/version: 8.0.0
 URL: https://github.com/ChristofSeiler/cellpaintr, https://christofseiler.github.io/cellpaintr/

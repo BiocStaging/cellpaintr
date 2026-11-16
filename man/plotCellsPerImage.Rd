@@ -9,7 +9,7 @@ plotCellsPerImage(sce, bins = 100)
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{bins}{Number of histogram bins}
+\item{bins}{numeric(1), number of histogram bins}
 }
 \value{
 \code{\link[ggplot2]{ggplot2}} object
@@ -19,7 +19,7 @@ Plot number of cells per image
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 plotCellsPerImage(sce)
 

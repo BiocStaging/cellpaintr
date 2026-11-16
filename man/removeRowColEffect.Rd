@@ -9,21 +9,25 @@ removeRowColEffect(sce, assay_type = "tfmfeatures")
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{assay_type}{A string specifying the assay}
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+  with the corrected features in the new assay \code{"corrected"}
 }
 \description{
-Remove row and column effect using the median polish procedure
+Fits Tukey's median polish to the per-well medians of each feature and
+subtracts the overall, row, and column effects from every cell, similar
+to the B-score of high-throughput screening. The column data need the
+factors \code{Row} and \code{Col} with the plate position of each cell.
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce)
 row <- substr(sce$Well, 1, 1)
-row <- factor(row, levels = LETTERS[1:length(unique(row))])
+row <- factor(row, levels = sort(unique(row)))
 col <- substr(sce$Well, 2, 3)
 col <- factor(as.numeric(col))
 sce$Row <- row

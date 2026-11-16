@@ -1,27 +1,30 @@
 ---
-title: "cellpaintr Vignette"
-author: 
-- name: Christof Seiler
-  affiliation: 
-  - Center of Experimental Rheumatology, Department of Rheumatology, University Hospital Zurich, University of Zurich, Switzerland
-- name: Phatthamon Laphanuwat
-  affiliation: 
-  - Center of Experimental Rheumatology, Department of Rheumatology, University Hospital Zurich, University of Zurich, Switzerland
-- name: Caroline Ospelt
-  affiliation: 
-  - Center of Experimental Rheumatology, Department of Rheumatology, University Hospital Zurich, University of Zurich, Switzerland
+title: "Perturbation analysis of Cell Painting data with cellpaintr"
+author:
+    - name: Christof Seiler
+      affiliation:
+        - Center of Experimental Rheumatology, Department of Rheumatology,
+          University Hospital Zurich, University of Zurich, Switzerland
+    - name: Phatthamon Laphanuwat
+      affiliation:
+        - Center of Experimental Rheumatology, Department of Rheumatology,
+          University Hospital Zurich, University of Zurich, Switzerland
+    - name: Caroline Ospelt
+      affiliation:
+        - Center of Experimental Rheumatology, Department of Rheumatology,
+          University Hospital Zurich, University of Zurich, Switzerland
 date: "`r Sys.Date()`"
-output: 
-  BiocStyle::html_document
+output:
+    BiocStyle::html_document
 vignette: >
-  %\VignetteIndexEntry{cellpaintr Vignette}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
+    %\VignetteIndexEntry{Perturbation analysis of Cell Painting data}
+    %\VignetteEngine{knitr::rmarkdown}
+    %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
-    echo = TRUE, warning = FALSE, message = FALSE,
+    echo = TRUE, warning = TRUE, message = TRUE,
     fig.retina = 2, dpi = 96,
     fig.width = 7.2916667, fig.asp = 0.6178571
 )
@@ -29,13 +32,43 @@ knitr::opts_chunk$set(
 
 # Introduction
 
-High-content imaging can capture detailed morphological and functional features on a single-cell level. It has been widely used in drug screen assays and for generating large-scale image datasets for machine learning models. Software such as CellProfiler extract features from high-content images for downstream analysis. CellProfiler implements a suite of traditional image processing algorithms to segment cells and extract about 1,000 morphological and texture features.
+High-content imaging measures the morphology of single cells in detail.
+In a Cell Painting experiment, cells are stained with dyes for several
+organelles, imaged, and segmented, and CellProfiler measures about 1,000
+features of every cell: its size and shape, the intensity and texture of
+each stain, how the stains are distributed between the nucleus and the cell
+edge, and how two stains colocalize. Comparing these features between a
+perturbation, such as a drug, and a control shows whether and how the
+perturbation changes the cells.
 
-To simplify data analysis of CellProfiler features in R---many options exist in Python, such as PyCytominer---we developed an R/Bioconductor package. Our package leverages Bioconductor objects for batch correction and dimension reduction, lowering the learning curve for users familiar with single-cell RNA sequencing workflows.
+cellpaintr is built for experiments with few biological replicates, such as
+patient-derived cells from a handful of donors. The cells are abundant, but
+the replicates are not, and the replicates, not the cells, are the
+independent units. cellpaintr therefore learns on cells and tests on
+replicates:
+
+1. For each replicate, a random forest trained on the cells of all other
+    replicates scores the cells of the held-out replicate with the
+    probability of the perturbed condition (pre-validation with replicates
+    as folds). Every score comes from a model that never saw that replicate.
+2. A patient-level test compares the scores of the perturbed and the
+    control cells of each replicate. Because the models of different
+    held-out replicates are trained on each other's cells, their scores are
+    correlated, and an ordinary paired t-test is too liberal. cellpaintr
+    offers an exact permutation test and two corrected t-tests.
+3. The test is repeated for interpretable feature groups, such as
+    CellProfiler measurement types (intensity, texture, ...) or imaging
+    channels, and summarized in a volcano plot.
+
+Profiling pipelines such as pycytominer aggregate single cells into
+well-level profiles and compare profiles by their similarity. cellpaintr
+instead trains on single cells, so changes in a subpopulation of cells or in
+the shape of a feature distribution can contribute to the test. It keeps the
+data in a `SingleCellExperiment`, so that tools from Bioconductor
+single-cell workflows, such as `scater` and `scrapper`, apply without
+conversion.
 
 # Installation
-
-Install this package.
 
 ```{r install-package, eval=FALSE}
 if (!require("BiocManager", quietly = TRUE)) {
@@ -44,13 +77,7 @@ if (!require("BiocManager", quietly = TRUE)) {
 BiocManager::install("cellpaintr")
 ```
 
-# Workflow
-
-## Preparation
-
-Load packages.
-
-```{r load-libs}
+```{r load-libs, message=FALSE}
 library(cellpaintr)
 library(scater)
 library(scrapper)
@@ -59,211 +86,398 @@ library(dplyr)
 library(ggrepel)
 ```
 
-## Load Data
+# Input data
 
-Load `CellProfiler` output and create a `SingleCellExperiment` object.
+## What cellpaintr reads
+
+cellpaintr reads the per-object table that CellProfiler's
+ExportToSpreadsheet module writes for the cells, usually called
+`MyExpt_Cells.csv`, with one row per cell. `loadData()` expects
+
+- the column `ImageNumber`, which identifies the image (site) of each cell,
+    and usually `ObjectNumber`;
+- image metadata columns whose names start with `Metadata_`, such as
+    `Metadata_Plate`, `Metadata_Well`, `Metadata_Patient`, and
+    `Metadata_Drug`. CellProfiler adds them to the cell table with the option
+    "Add image metadata columns to your object data file" of
+    ExportToSpreadsheet; the plate layout (which drug and which patient are in
+    which well) usually comes from a metadata file loaded with the Metadata
+    module;
+- numeric measurement columns, such as `AreaShape_Area`,
+    `Intensity_MeanIntensity_DNA`, or `Texture_Contrast_Mito_3_00_256`. Their
+    names follow CellProfiler's convention
+    `<MeasurementType>_<Feature>_<Channel>_<Parameters>`, which cellpaintr
+    uses to form feature groups.
+
+`loadData()` turns the `Metadata_` columns, without the prefix, together
+with `ImageNumber`, `ObjectNumber`, and the cell centre coordinates
+`Location_Center_X`, `_Y`, and `_Z`, into the column data of the cells, and
+all other columns into the assay `features`. If the metadata were exported
+only to the image table (`MyExpt_Image.csv`), join them to the cells by
+`ImageNumber` first:
+
+```{r join-metadata, eval=FALSE}
+cells <- readr::read_csv("MyExpt_Cells.csv")
+images <- readr::read_csv("MyExpt_Image.csv") |>
+    select(ImageNumber, starts_with("Metadata_"))
+readr::write_csv(left_join(cells, images, by = "ImageNumber"), "cells.csv")
+sce <- loadData("cells.csv")
+```
+
+## Example data from the JUMP Cell Painting Consortium
+
+The package ships a small subset of the JUMP Cell Painting dataset
+(cpg0016), released under CC0 by the JUMP Cell Painting Consortium through
+the Cell Painting Gallery. U2OS cells were stained for DNA (Hoechst), RNA
+(SYTO 14), actin, Golgi, and plasma membrane (AGP), and mitochondria (Mito),
+and imaged with brightfield as well. The subset holds 240 cells from four
+compound plates of one batch: the negative control DMSO and two of the
+eight JUMP positive controls, AMG900, an Aurora kinase inhibitor with a
+strong effect on morphology, and dexamethasone, a glucocorticoid with a weak
+one. For each plate and compound, two random wells and, from each well, 10
+random cells of one random site were kept, with all CellProfiler
+measurements of the cell compartment. The script
+`system.file("scripts", "make-jump-subset.R", package = "cellpaintr")`
+documents how the subset was made.
+
+These data have no patients. Plates take their place as the replicates:
+every plate carries all three compounds, so the design is paired, as in a
+drug screen on patient-derived cells where every patient's cells are imaged
+with and without each drug.
 
 ```{r read-data}
-set.seed(23)
-cell_file <- generate_data()
+cell_file <- system.file("extdata", "jump_subset.csv.gz",
+    package = "cellpaintr"
+)
 sce <- loadData(cell_file)
+sce
+table(sce$Compound, sce$Plate)
 ```
 
-## Data Cleaning and Transformation
+# Preprocessing
 
-Prepare the data for machine learning.
+## Cells and features
 
-```{r data-preprocessing}
-# remove cells with missing features
+CellProfiler also exports columns that describe the segmentation rather than
+the cells, such as the number of child objects or the object numbers of the
+nearest neighbours. Remove them before modeling.
+
+```{r remove-bookkeeping}
+bookkeeping <- grepl(
+    "^(Parent|Children)_|ObjectNumber",
+    rownames(sce)
+)
+sce <- sce[!bookkeeping, ]
+```
+
+Remove cells with missing measurements, features without spread, and
+features that are mostly zero, which often come from empty stains or
+failed measurements.
+
+```{r data-cleaning}
 sce <- removeNAs(sce)
-
-# number of cells
-plotCellsPerImage(sce)
-
-# remove outlier images
-sce <- removeOutliers(sce, min = 0, max = 300)
-
-# remove outlier cells
-stats <- perCellQCMetrics(sce, assay.type = "features")
-sce <- sce[, !isOutlier(stats$sum)]
-
-# remove features with zero spread
 sce <- removeLowVariance(sce, robust = TRUE)
-
-# remove zero-inflated features
-sce <- removeZeroInflation(sce)
+sce <- removeZeroInflation(sce, proportion = 0.2)
+dim(sce)
 ```
 
-Transform non-negatives features and scale all features.
+In a full experiment, images with very few cells (out of focus, empty
+wells) or very many cells (debris, clumps) are often of poor quality.
+`plotCellsPerImage()` shows the number of cells per image, and
+`removeOutliers()` removes the cells of images outside a range. The example
+data keep only 10 cells of one site per well, so this step does not apply
+here. Cell-level outliers can be removed with `scater`, for example cells
+whose summed features lie more than three median absolute deviations from
+the median.
+
+```{r cells-per-image, eval=FALSE}
+plotCellsPerImage(sce)
+sce <- removeOutliers(sce, min = 20, max = 300)
+qc <- perCellQCMetrics(sce, assay.type = "features")
+sce <- sce[, !isOutlier(qc$sum)]
+```
+
+## Transformation and scaling
+
+CellProfiler features live on different scales: intensities are positive
+and skewed, correlations are bounded by -1 and 1, and some texture measures
+are proportions. `transformScale()` transforms each family to an
+approximately unbounded, symmetric scale (logarithm, Fisher's z, logit, or a
+rank-based inverse normal transformation), caps infinite values at the
+finite extremes of each feature, and standardizes every feature, here with
+robust z-scores based on the median and the median absolute deviation. The
+result is stored in the new assay `tfmfeatures`.
 
 ```{r transform-data}
 sce <- transformScale(sce, robust = TRUE)
+assayNames(sce)
 ```
 
-## Unsupervised Analysis
+## Plate effects
 
-Pseudo-bulk over images.
+Plates often show gradients across rows and columns, for example from
+evaporation at the edges. `removeRowColEffect()` fits Tukey's median polish
+to the median of each feature in each well and subtracts the row and column
+effects from every cell. It needs the factors `Row` and `Col` in the column
+data and many wells per plate, so that row and column effects can be told
+apart from compound effects. The example data have six wells per plate, so
+we skip this step:
 
-```{r aggreate}
+```{r row-col-effect, eval=FALSE}
+sce$Row <- factor(substr(sce$Well, 1, 1))
+sce$Col <- factor(as.integer(substr(sce$Well, 2, 3)))
+sce <- removeRowColEffect(sce)
+```
+
+Note that in the JUMP layout the positive controls sit in the outer
+columns of every plate and DMSO in the next columns, so compound and plate
+position are confounded, and the same positional effect repeats on every
+plate. A comparison between them measures compound and position together.
+In your own experiments, randomize the positions of the conditions within
+each replicate.
+
+# Exploratory analysis
+
+Single cells are noisy, so average the transformed features per well
+(pseudo-bulk) with `scrapper` and look at the wells with a principal
+component analysis from `scater`.
+
+```{r aggregate}
 aggr <- scrapper::aggregateAcrossCells(
     assay(sce, "tfmfeatures"),
-    factors = colData(sce)[, c("ImageNumber", "Drug", "Patient")]
+    factors = colData(sce)[, c("Plate", "Well", "Compound")]
 )
-sce_aggr <- SingleCellExperiment(
-    assays = list(sums = aggr$sums),
+sce_wells <- SingleCellExperiment(
+    assays = list(means = t(t(aggr$sums) / aggr$counts)),
     colData = DataFrame(aggr$combinations, ncells = aggr$counts)
 )
+sce_wells <- runPCA(sce_wells, exprs_values = "means", ncomponents = 10)
+plotReducedDim(sce_wells, dimred = "PCA", colour_by = "Compound")
+plotReducedDim(sce_wells, dimred = "PCA", colour_by = "Plate")
 ```
 
-Use `scater` for exploratory data analysis. PCA on pseudo-bulk features.
-
-```{r compute-pca}
-sce_aggr <- scater::runPCA(sce_aggr,
-    assay.type = "sums",
-    ncomponents = 10
-)
-scater::plotReducedDim(sce_aggr, dimred = "PCA", colour_by = "Patient")
-scater::plotReducedDim(sce_aggr, dimred = "PCA", colour_by = "Drug")
-```
-
-What is driving PC1?
+If the wells separate by compound, the compounds change the cells; if they
+separate by plate, there are batch effects between plates. `plotPCACor()`
+shows the features most correlated with a principal component, here the
+first one.
 
 ```{r plot-pca}
-plotPCACor(sce_aggr, filter_by = 1, assay_type = "sums")
+plotPCACor(sce_wells, filter_by = 1, top = 15, assay_type = "means")
 ```
 
-UMAP.
+For larger experiments, a nonlinear embedding such as UMAP can show groups
+of wells or cells that the first principal components miss, for example
+with `scater::runUMAP(sce_wells, exprs_values = "means")` followed by
+`scater::plotUMAP(sce_wells, colour_by = "Compound")`.
 
-```{r umap}
-sce_aggr <- scater::runUMAP(sce_aggr, exprs_values = "sums")
-scater::plotUMAP(sce_aggr, colour_by = "Patient")
-scater::plotUMAP(sce_aggr, colour_by = "Drug")
-```
+# Testing a perturbation
 
-## Supervised Analysis
+## Pre-validated scores
 
-Compare positive control to negative control.
+`predictLOO()` compares two levels of a condition (`target`) with the
+replicates (`group`) as the folds of the leave-one-out cross-validation.
+For each plate, it trains a random forest on the cells of the other plates
+to tell AMG900 from DMSO, and scores the cells of the held-out plate with
+the probability of AMG900. It does this for all features together and for
+each feature group: measurement types, given by the prefix of the feature
+names, and channels, given by any part of them.
 
-```{r predict-single-drug}
-set.seed(23)
-
-sce$Drug <- as.factor(sce$Drug)
-sce$Drug <- relevel(sce$Drug, ref = "D1")
-
-types <- c("AreaShape", "Intensity", "Texture")
-
-sce_single <- predictLOO(
-    sce,
-    target = "Drug", group = "Patient",
-    interest_level = "D7", reference_level = "D1",
-    types = types,
-    n_threads = 1
+```{r predict-amg900}
+types <- c(
+    "AreaShape", "Intensity", "Texture", "RadialDistribution",
+    "Granularity", "Correlation"
 )
+channels <- c("DNA", "RNA", "AGP", "Mito")
+set.seed(23)
+sce_amg900 <- predictLOO(
+    sce,
+    target = "Compound", group = "Plate",
+    interest_level = "AMG900", reference_level = "DMSO",
+    types = types, channels = channels,
+    n_threads = 1, progress = FALSE
+)
+reducedDim(sce_amg900, "prevalidated")[1:3, 1:4]
 ```
 
-Test each feature group for higher scores of D7 than of D1.
-`calculateStats()` averages the leave-one-out scores per patient and drug
-and computes a one-sided t-statistic per feature group.
-Its permutation test swaps the drug labels of whole patients,
-refits all leave-one-out models,
-and compares the observed statistic with those of all relabelings.
-Swapping the drugs of all patients at once gives the same statistic,
-because every score becomes one minus the score,
-so one patient keeps its labels.
-With six patients, there are $2^5 = 32$ relabelings,
-so the smallest attainable p-value is 1/32,
-and the test refits the models 31 times.
+`plotLOO()` shows the scores averaged per plate and compound, one panel per
+feature group. If the compound changes the cells, the AMG900 cells of every
+plate score higher than the DMSO cells of the same plate.
 
-```{r test-single-drug}
-stats <- calculateStats(sce_single, target = "Drug", group = "Patient")
-stats
+```{r plot-loo}
+plotLOO(sce_amg900, target = "Compound", group = "Plate")
 ```
 
-The corrected t-test is a fast alternative for paired designs.
-The scores of different held-out patients are correlated,
-because each patient is in the training set of every other patient's model,
-so the t-statistic is too large.
-If each score difference is a sum of pairwise interactions with the other patients,
-it is too large by the factor $\sqrt{2(n-1)/(n-2)}$,
-or about 1.58 with six patients.
-The corrected t-test divides the t-statistic by this factor.
-It needs no refits,
-and its p-values are not limited to multiples of 1/32,
-but unlike the permutation test, it is approximate.
+## Patient-level tests
+
+`calculateStats()` averages the scores per replicate and condition, takes
+the difference $d_p$ for each replicate $p$, and computes the one-sided
+paired t-statistic for higher scores in the perturbed condition. It
+reports, for each feature group, the $\log_2$ fold change of the mean scores
+and a p-value from one of three calibrations.
+
+The **permutation test** (the default) swaps the conditions of whole
+replicates, refits all models for every relabeling, and compares the
+observed statistic with those of the relabelings. It is exact. Swapping the
+conditions of all replicates at once gives the same statistic, so one
+replicate keeps its labels: with $n$ replicates there are $2^{n-1}$
+relabelings, and the smallest attainable p-value is $2^{1-n}$, here
+$1/8$ with four plates. The test refits all models for every relabeling,
+so it takes $2^{n-1}$ times as long as `predictLOO()`.
+
+```{r test-permutation}
+set.seed(23)
+stats_permutation <- calculateStats(sce_amg900,
+    target = "Compound", group = "Plate"
+)
+stats_permutation
+```
+
+`r sum(stats_permutation$pvalue == 1/8)` of the
+`r nrow(stats_permutation)` feature groups reach the smallest attainable
+p-value, 1/8: the observed labels give the largest statistic of all
+relabelings. With four replicates, no permutation p-value can be smaller,
+however strong the effect, and none can pass a Bonferroni threshold over
+several feature groups.
+
+The **corrected t-test** needs no refits. Every replicate is in the training
+set of every other replicate's model, so the score differences of different
+replicates are positively correlated, and the ordinary t-statistic is too
+large. If each score difference is a sum of pairwise interactions with the
+other replicates, it is too large by the factor $\sqrt{2(n-1)/(n-2)}$, about
+1.73 with four replicates; the corrected t-test divides by it. Its p-values
+are not limited to multiples of $2^{1-n}$, but it is approximate.
 
 ```{r test-corrected}
-stats_corrected <- calculateStats(sce_single,
-    target = "Drug", group = "Patient", method = "corrected"
+stats_corrected <- calculateStats(sce_amg900,
+    target = "Compound", group = "Plate", method = "corrected"
 )
 stats_corrected
 ```
 
-The corrected t-test of Nadeau and Bengio (2003) is a second option without refits.
-It divides the t-statistic by $\sqrt{(2n-1)/(n-1)}$, about 1.48 with six patients,
-which assumes a slightly smaller correlation between the score differences.
-It corrects less and has more power,
-which pays off if part of each score difference is independent of the other patients,
-but with four to six patients it can exceed the nominal level
-when the score differences consist mostly of interactions between patients.
+```{r corrected-range, include=FALSE}
+p_range <- format(signif(range(stats_corrected$pvalue), 2), scientific = FALSE)
+```
+
+The corrected p-values range from `r p_range[1]` to `r p_range[2]`, below
+the floor of the permutation test.
+
+The **Nadeau-Bengio correction** divides by the smaller factor
+$\sqrt{(2n-1)/(n-1)}$ of the corrected resampled t-test of Nadeau and
+Bengio (2003). It has more power when part of each score difference is
+independent of the other replicates, for example noise from the random
+seeds of the forests, but with four to six replicates it can exceed the
+nominal level when the score differences consist mostly of interactions.
 
 ```{r test-nadeau-bengio}
-stats_nadeau_bengio <- calculateStats(sce_single,
-    target = "Drug", group = "Patient", method = "nadeau_bengio"
+stats_nadeau_bengio <- calculateStats(sce_amg900,
+    target = "Compound", group = "Plate", method = "nadeau_bengio"
 )
 stats_nadeau_bengio
 ```
 
-Summarize feature subgroups in a volcano plot.
+`method = "t"` takes p-values from the t-distribution without correction.
+It is fast but too liberal, and is meant for ranking many comparisons, not
+for inference.
+
+## Summaries
+
+The volcano plot shows one point per feature group, with the $\log_2$ fold
+change against the p-value. By default, groups beyond a Bonferroni threshold
+of $0.01/G$ for $G$ feature groups and a $\log_2$ fold change of 1 are
+labeled. With four replicates, the permutation test cannot reach this
+threshold, so we use the corrected t-test and a threshold of 0.05.
 
 ```{r plot-volcano}
-volcanoPlot(sce_single,
-    target = "Drug", group = "Patient",
-    stats = stats, p_cutoff = 0.05, fc_cutoff = 0.5
+volcanoPlot(sce_amg900,
+    target = "Compound", group = "Plate",
+    stats = stats_corrected, p_cutoff = 0.05
 )
 ```
 
-Individual scores.
+ROC curves and areas under the curve describe how well the scores of each
+feature group separate the two conditions, across all cells of all
+replicates.
 
-```{r plot-scores}
-plotLOO(sce_single, target = "Drug", group = "Patient")
-plotAUC(sce_single, target = "Drug", group = "Patient")
-plotROC(sce_single, target = "Drug", group = "Patient")
+```{r plot-roc}
+plotAUC(sce_amg900, target = "Compound", group = "Plate")
+plotROC(sce_amg900, target = "Compound", group = "Plate")
 ```
 
-Compare a list of drugs to negative control.
+## A weak effect
 
-```{r predict-multiple-drugs}
+Dexamethasone changes U2OS cells much less than AMG900. With few
+replicates and cells, its scores barely separate from DMSO.
+
+```{r predict-dexamethasone}
 set.seed(23)
-
-reference_level <- "D1"
-interest_levels <- setdiff(levels(sce$Drug), reference_level)
-
-sce_list <- map(interest_levels, function(interest_level) {
-    predictLOO(
-        sce,
-        target = "Drug", group = "Patient",
-        interest_level = interest_level, reference_level = reference_level,
-        types = types,
-        n_threads = 1
-    )
-}, .progress = "drug screening")
+sce_dex <- predictLOO(
+    sce,
+    target = "Compound", group = "Plate",
+    interest_level = "dexamethasone", reference_level = "DMSO",
+    types = types, channels = channels,
+    n_threads = 1, progress = FALSE
+)
+stats_dex <- calculateStats(sce_dex,
+    target = "Compound", group = "Plate", method = "corrected"
+)
+stats_dex
 ```
 
-Custom volcano plot for summarizing drugs faceted by features.
-For a quick screen of many drugs,
-`method = "t"` takes p-values from the t-distribution
-instead of the permutation test.
-These p-values are anti-conservative,
-because the scores of different held-out patients are correlated,
-so use them to rank drugs and confirm hits with the permutation test
-or the corrected t-test.
+The smallest p-value, `r signif(min(stats_dex$pvalue), 2)`, does not pass a
+Bonferroni threshold of $0.05/`r nrow(stats_dex)`$ over the feature groups.
+Detecting weak effects needs more replicates; the cells per replicate help
+only as far as they sharpen each replicate's score difference.
+
+## Run time and parallel computing
+
+`predictLOO()` fits one forest per replicate and feature group, and
+`n_threads` sets the number of threads of each fit. The permutation test
+refits these forests for every relabeling. The relabelings can run in
+parallel with the future framework: set a plan before calling
+`calculateStats()`. Keep the product of the number of workers and
+`n_threads` at or below the number of cores.
+
+```{r parallel, eval=FALSE}
+future::plan(future::multisession, workers = 4)
+stats <- calculateStats(sce_amg900, target = "Compound", group = "Plate")
+future::plan(future::sequential)
+```
+
+# A drug screen with simulated data
+
+`generateData()` simulates a small CellProfiler table with 1,000 cells from
+six patients and eight drugs, with 10 shape, 10 intensity, and 10 texture
+features named as in real CellProfiler output. Drugs D7 and D8 shift the
+texture features; D1 is the control. Every drug is compared with the
+control, and the p-values of all comparisons and feature groups are
+adjusted together.
+
+```{r simulate}
+set.seed(23)
+sce_sim <- loadData(generateData())
+sce_sim <- transformScale(sce_sim, robust = TRUE)
+sce_sim$Drug <- relevel(as.factor(sce_sim$Drug), ref = "D1")
+types_sim <- c("AreaShape", "Intensity", "Texture")
+
+sce_list <- map(setdiff(levels(sce_sim$Drug), "D1"), function(drug) {
+    predictLOO(
+        sce_sim,
+        target = "Drug", group = "Patient",
+        interest_level = drug, reference_level = "D1",
+        types = types_sim, n_threads = 1, progress = FALSE
+    )
+})
+```
+
+For a quick screen of many drugs, the corrected t-test needs no refits. Its
+p-values are adjusted with the Benjamini-Hochberg procedure over all drugs
+and feature groups.
 
 ```{r plot-volcano-custom}
-# prepare stats table
 p_adj_cutoff <- 0.05
 fc_cutoff <- 0.5
 tb_stats <- lapply(sce_list, calculateStats,
-    target = "Drug", group = "Patient", method = "t"
+    target = "Drug", group = "Patient", method = "corrected"
 ) |>
     bind_rows() |>
     mutate(pvalue_adj = p.adjust(pvalue, method = "BH")) |>
@@ -272,10 +486,11 @@ tb_stats <- lapply(sce_list, calculateStats,
         Target, ""
     ))
 
-# volcano plot
 tb_stats |>
     ggplot(aes(log2FoldChange, -log10(pvalue_adj), label = Selection)) +
-    geom_vline(xintercept = c(0, fc_cutoff), alpha = 0.5, linetype = "dashed") +
+    geom_vline(
+        xintercept = c(0, fc_cutoff), alpha = 0.5, linetype = "dashed"
+    ) +
     geom_hline(
         yintercept = c(0, -log10(p_adj_cutoff)), alpha = 0.5,
         linetype = "dashed"
@@ -285,11 +500,11 @@ tb_stats |>
     xlab("log2 fold change") +
     ylab("-log10 p-value (BH adjusted)") +
     facet_wrap(~Feature) +
-    ggtitle(paste0("False Discovery Rate: ", 100 * p_adj_cutoff, "%"))
+    ggtitle(paste0("False discovery rate: ", 100 * p_adj_cutoff, "%"))
 ```
 
-# Session Info {-}
+# Session information {-}
 
-```{r session_info}
+```{r session-info}
 sessionInfo()
 ```

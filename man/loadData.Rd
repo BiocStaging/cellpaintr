@@ -4,20 +4,35 @@
 \alias{loadData}
 \title{Load cell painting data from file and convert to a SingleCellExperiment}
 \usage{
-loadData(cell_file)
+loadData(cell_file, ...)
 }
 \arguments{
-\item{cell_file}{path to csv file from CellProfiler, e.g., MyExpt_Cells.csv}
+\item{cell_file}{character(1), path to a csv file from CellProfiler, e.g.,
+\code{MyExpt_Cells.csv}; compressed files such as \code{.csv.gz} work}
+
+\item{...}{Further arguments to \code{\link[readr]{read_csv}}, for example
+\code{num_threads} to limit the threads used to read large files}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+  with features as rows and cells as columns
 }
 \description{
-Load cell painting data from file and convert to a SingleCellExperiment
+Reads a per-cell table exported by CellProfiler's ExportToSpreadsheet
+module, for example \code{MyExpt_Cells.csv}, with one row per cell. The
+table needs the column \code{ImageNumber}, at least one image metadata
+column whose name starts with \code{Metadata_} (CellProfiler adds them with
+the option "Add image metadata columns to your object data file"), and
+numeric measurement columns such as \code{AreaShape_Area} or
+\code{Intensity_MeanIntensity_DNA}. Metadata columns become the column
+data of the cells, without the \code{Metadata_} prefix, together with
+\code{ImageNumber}, \code{ObjectNumber}, and \code{Location_Center_X},
+\code{_Y}, and \code{_Z}; all other columns become the features in the
+assay \code{"features"}.
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 loadData(cell_file)
 
 }

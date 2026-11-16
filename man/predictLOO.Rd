@@ -21,26 +21,37 @@ predictLOO(
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{target}{Name of target variable for prediction}
+\item{target}{character(1), name of the column of \code{colData(sce)}
+with the condition of each cell, such as the drug}
 
-\item{group}{Grouping variable for cross-validation, e.g., patient}
+\item{group}{character(1), name of the column of \code{colData(sce)}
+with the replicate of each cell, such as the patient; the replicates
+are the folds of the leave-one-out cross-validation}
 
-\item{interest_level}{Factor interest level in `target` variable}
+\item{interest_level}{character(1), level of `target` compared with the
+reference, such as a drug}
 
-\item{reference_level}{Factor reference level in `target` variable}
+\item{reference_level}{character(1), level of `target` used as the
+reference, such as the control}
 
-\item{types}{Vector of strings of feature types}
+\item{types}{\code{NULL} or character vector of CellProfiler measurement
+types, such as \code{"Intensity"}; each type is a feature group of the
+features whose names start with it}
 
-\item{channels}{Vector of strings of feature channels}
+\item{channels}{\code{NULL} or character vector of imaging channels, such
+as \code{"DNA"} or \code{"Mito"}; each channel is a feature group of the
+features whose names contain it}
 
-\item{weights}{Weights variable when features are aggregated}
+\item{weights}{\code{NULL} or character(1), name of the column of
+\code{colData(sce)} with case weights, for example cell counts when
+cells are aggregated to images}
 
-\item{n_threads}{Number of parallel threads for fitting of models}
+\item{n_threads}{numeric(1), number of threads of each random forest fit}
 
-\item{assay_type}{A string specifying the assay}
+\item{assay_type}{character(1), name of the assay with the features}
 
-\item{progress}{Show a progress bar while fitting the models of feature
-types and channels}
+\item{progress}{logical(1), show a progress bar while fitting the models
+of feature types and channels}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -54,7 +65,7 @@ Predict target from features
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce)
 

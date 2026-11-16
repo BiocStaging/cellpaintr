@@ -4,12 +4,15 @@
 \alias{removeZeroInflation}
 \title{Remove zero-inflated features}
 \usage{
-removeZeroInflation(sce, proportion = 0.2)
+removeZeroInflation(sce, proportion = 0.2, assay_type = "features")
 }
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{proportion}{Remove features exceeding this zero-inflation proportion}
+\item{proportion}{numeric(1) between 0 and 1, remove features with a
+larger proportion of zeros}
+
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -19,7 +22,7 @@ Remove zero-inflated features
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- removeZeroInflation(sce)
 

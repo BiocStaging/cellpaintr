@@ -16,11 +16,14 @@ calculateStats(
 \arguments{
 \item{sce}{Output of \code{\link{predictLOO}}}
 
-\item{target}{Name of target variable for prediction}
+\item{target}{character(1), name of the column of \code{colData(sce)}
+with the condition of each cell, such as the drug}
 
-\item{group}{Grouping variable for cross-validation, e.g., patient}
+\item{group}{character(1), name of the column of \code{colData(sce)}
+with the replicate of each cell, such as the patient; the replicates
+are the folds of the leave-one-out cross-validation}
 
-\item{assay_type}{A string specifying the assay}
+\item{assay_type}{character(1), name of the assay with the features}
 
 \item{method}{Either `"permutation"` (default) for a permutation test that
 relabels whole patients, `"corrected"` for the corrected paired t-test,
@@ -103,7 +106,7 @@ patients are positively correlated.
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce)
 

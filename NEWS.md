@@ -16,6 +16,40 @@
 
 # cellpaintr 0.99.7
 
+Changes in response to the first Bioconductor review:
+
+- `generate_data()` is renamed `generateData()`, in line with the rest of
+  the API.
+- New example data: `inst/extdata/jump_subset.csv.gz`, 240 cells of the
+  JUMP Cell Painting dataset (DMSO, AMG900, and dexamethasone on four
+  plates) as exported by CellProfiler; `inst/scripts/make-jump-subset.R`
+  documents how it was made, and `inst/scripts/README.md` the provenance of
+  all files in `inst/extdata`.
+- The vignette is rewritten around the JUMP data: it describes the
+  CellProfiler input and its `Metadata_` columns, explains every step, and
+  shows the messages of `calculateStats()`.
+- New package man page (`?cellpaintr`) with an overview of the workflow.
+- Exported functions validate their inputs and stop with informative
+  messages; `predictLOO()` accepts a character `target`, needs at least two
+  levels of `group`, and keeps the cell names of `sce` instead of replacing
+  them with integers.
+- `loadData()` passes further arguments to `readr::read_csv()`, for example
+  `num_threads`.
+- `removeNAs()`, `removeLowVariance()`, `removeZeroInflation()`, and
+  `transformScale()` have an `assay_type` argument, and use vectorized
+  `colSums()`, `rowMeans()`, and `MatrixGenerics` instead of `apply()`.
+- The relabelings of the permutation test run through
+  `future.apply::future_lapply()`, sequentially by default and in parallel
+  after `future::plan()`, with reproducible random numbers.
+- Functions are imported instead of declared as global variables; `rlang`,
+  `stats`, `methods`, `MatrixGenerics`, and `future.apply` are imported.
+- Long functions are split into helpers, and the code follows the
+  Bioconductor style (80 characters, 4-space indents).
+- `compute_y_hat()` and `aggregateYhat()` are internal and have no man
+  pages.
+- More unit tests check values, not only classes, and cover the input
+  checks.
+
 - The corrected t-test of `calculateStats()` (`method = "corrected"`) now
   divides the paired t-statistic by sqrt(2(n-1)/(n-2)), the factor by which
   it is too large if each score difference is a sum of pairwise interactions

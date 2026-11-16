@@ -9,89 +9,51 @@
 #'
 #' @examples
 #' set.seed(23)
-#' generate_data()
+#' generateData()
 #'
-generate_data <- function() {
+generateData <- function() {
     # use column names from CellProfiler and simulate data
     header_file <- system.file(
         "extdata", "header.csv",
         package = "cellpaintr", mustWork = TRUE
     )
-    df <- read_csv(header_file, show_col_types = FALSE)
+    names_cp <- names(read_csv(header_file, show_col_types = FALSE))
 
     # create a 384-well plate
-    row <- LETTERS[seq(16)]
-    col <- sprintf("%02d", seq(24))
-    grid <- expand.grid(col = col, row = row)
+    grid <- expand.grid(col = sprintf("%02d", seq(24)), row = LETTERS[seq(16)])
     wells <- paste0(grid$row, grid$col)
 
-    # set sample sizes
-    n_patients <- 6
-    n_images <- 100
+    # 1,000 cells on 100 images, six patients, eight drugs, and 10 features
+    # per measurement type
     n_cells <- 1000
-    n_drugs <- 8
-
-    # only keep p features for each type
     p <- 10
-
-    # parameters of distributions
-    pois_lambda <- 10
-    gamma_shape <- 1
-
-    # effect size of drug perturbation
-    d7_shift <- 0.2
-    d8_shift <- 0.4
-
-    # simulate meta data
-    ObjectNumber <- seq(n_cells)
-    ImageNumber <- sample(n_images, n_cells, replace = TRUE)
-    Metadata_Well <- sample(wells, n_cells, replace = TRUE)
-    Metadata_Patient <- sample(paste0("P", seq(n_patients)), n_cells,
-        replace = TRUE
-    )
-    Metadata_Drug <- sample(paste0("D", seq(n_drugs)), n_cells, replace = TRUE)
-
-    # simulate non-negative shape features
-    shape <- names(df)[str_detect(names(df), "AreaShape_")]
-    shape <- sample(shape, p)
-    shape_mat <-
-        rpois(n = n_cells * length(shape), lambda = pois_lambda) |>
-        matrix(nrow = n_cells, ncol = length(shape)) |>
-        as.data.frame()
-    colnames(shape_mat) <- shape
-
-    # simulate non-negative intensity features
-    intensity <- names(df)[str_detect(names(df), "Intensity_")]
-    intensity <- sample(intensity, p)
-    intensity_mat <-
-        rgamma(n = n_cells * length(intensity), shape = gamma_shape) |>
-        matrix(nrow = n_cells, ncol = length(intensity)) |>
-        as.data.frame()
-    colnames(intensity_mat) <- intensity
-
-    # simulate real-valued texture features
-    texture <- names(df)[str_detect(names(df), "Texture_")]
-    texture <- sample(texture, p)
-    texture_mat <-
-        rgamma(n = n_cells * length(texture), shape = gamma_shape) |>
-        matrix(nrow = n_cells, ncol = length(texture)) |>
-        as.data.frame()
-    colnames(texture_mat) <- texture
-
-    # combine into one data frame
-    df <- data.frame(
-        ObjectNumber, ImageNumber,
-        Metadata_Well, Metadata_Patient, Metadata_Drug,
-        shape_mat, intensity_mat, texture_mat
+    draw <- function(x) sample(x, n_cells, replace = TRUE)
+    meta <- data.frame(
+        ObjectNumber = seq(n_cells),
+        ImageNumber = draw(100),
+        Metadata_Well = draw(wells),
+        Metadata_Patient = draw(paste0("P", seq(6))),
+        Metadata_Drug = draw(paste0("D", seq(8)))
     )
 
-    # shift texture features of D7
-    cells_d07 <- which(df$Metadata_Drug == "D7")
-    df[cells_d07, texture] <- df[cells_d07, texture] + d7_shift
+    # non-negative shape, intensity, and texture features
+    shape <- simulate_features(names_cp, "AreaShape_", p, n_cells,
+        function(n) rpois(n, lambda = 10)
+    )
+    intensity <- simulate_features(names_cp, "Intensity_", p, n_cells,
+        function(n) rgamma(n, shape = 1)
+    )
+    texture <- simulate_features(names_cp, "Texture_", p, n_cells,
+        function(n) rgamma(n, shape = 1)
+    )
+    df <- data.frame(meta, shape, intensity, texture)
 
-    # shift texture features of D8
-    cells_d08 <- which(df$Metadata_Drug == "D8")
-    df[cells_d08, texture] <- df[cells_d08, texture] + d8_shift
+    # shift the texture features of D7 and D8
+    shifts <- c(D7 = 0.2, D8 = 0.4)
+    for (drug in names(shifts)) {
+        cells <- which(df$Metadata_Drug == drug)
+        df[cells, names(texture)] <- df[cells, names(texture)] + shifts[[drug]]
+    }
 
     # write the simulated data frame to a temporary file
     cell_file <- tempfile(fileext = ".csv")
@@ -99,60 +61,87 @@ generate_data <- function() {
     cell_file
 }
 
+#' Internal function to simulate the features of one measurement type
+#'
+#' @param names_cp Column names of a CellProfiler table
+#' @param pattern Pattern of the feature names of the measurement type
+#' @param p Number of features
+#' @param n_cells Number of cells
+#' @param generator Function that draws a given number of random values
+#' @return \code{data.frame} with one column per sampled feature name
+#' @noRd
+#'
+simulate_features <- function(names_cp, pattern, p, n_cells, generator) {
+    features <- sample(names_cp[str_detect(names_cp, pattern)], p)
+    mat <- matrix(generator(n_cells * p), nrow = n_cells, ncol = p)
+    colnames(mat) <- features
+    as.data.frame(mat, check.names = FALSE)
+}
+
 #' Load cell painting data from file and convert to a SingleCellExperiment
+#'
+#' Reads a per-cell table exported by CellProfiler's ExportToSpreadsheet
+#' module, for example \code{MyExpt_Cells.csv}, with one row per cell. The
+#' table needs the column \code{ImageNumber}, at least one image metadata
+#' column whose name starts with \code{Metadata_} (CellProfiler adds them with
+#' the option "Add image metadata columns to your object data file"), and
+#' numeric measurement columns such as \code{AreaShape_Area} or
+#' \code{Intensity_MeanIntensity_DNA}. Metadata columns become the column
+#' data of the cells, without the \code{Metadata_} prefix, together with
+#' \code{ImageNumber}, \code{ObjectNumber}, and \code{Location_Center_X},
+#' \code{_Y}, and \code{_Z}; all other columns become the features in the
+#' assay \code{"features"}.
 #'
 #' @importFrom SingleCellExperiment SingleCellExperiment
 #' @importFrom readr read_csv
 #' @importFrom stringr str_detect str_remove
+#' @importFrom cli cli_abort
 #' @export
 #'
-#' @param cell_file path to csv file from CellProfiler, e.g., MyExpt_Cells.csv
+#' @param cell_file character(1), path to a csv file from CellProfiler, e.g.,
+#'   \code{MyExpt_Cells.csv}; compressed files such as \code{.csv.gz} work
+#' @param ... Further arguments to \code{\link[readr]{read_csv}}, for example
+#'   \code{num_threads} to limit the threads used to read large files
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#'   with features as rows and cells as columns
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' loadData(cell_file)
 #'
-loadData <- function(cell_file) {
-    # read file with cell data
-    data <- read_csv(cell_file, show_col_types = FALSE)
+loadData <- function(cell_file, ...) {
+    check_string(cell_file, "cell_file")
+    if (!file.exists(cell_file)) {
+        cli_abort("File {.file {cell_file}} does not exist.")
+    }
 
-    # remove features if they exist
+    # read file with cell data and remove features if they exist
+    data <- read_csv(cell_file, show_col_types = FALSE, ...)
     rmv_vars <- c("Number_Object_Number", "Parent_FilteredCell")
-    keep_vars <- names(data)[!names(data) %in% rmv_vars]
-    data <- data[, keep_vars]
+    data <- data[, !names(data) %in% rmv_vars]
 
     # split into meta data and features
-    meta_cols <- str_detect(names(data), "Metadata_")
+    meta_cols <- str_detect(names(data), "^Metadata_")
+    location <- paste0("Location_Center_", c("X", "Y", "Z"))
     meta_vars <- c(
-        "ImageNumber", "ObjectNumber", names(data)[meta_cols],
-        "Location_Center_X", "Location_Center_Y", "Location_Center_Z"
+        "ImageNumber", "ObjectNumber", names(data)[meta_cols], location
     )
     feature_vars <- names(data)[!names(data) %in% meta_vars]
+    check_cell_table(data, cell_file, feature_vars)
     meta_cell <- data[, intersect(names(data), meta_vars)]
     features <- data[, feature_vars] |> t() # columns represent cells
 
     # add NAs to location if it doesn't exist
-    if (sum(names(meta_cell) == "Location_Center_X") == 0) {
-        meta_cell$Location_Center_X <- NA
-    }
-    if (sum(names(meta_cell) == "Location_Center_Y") == 0) {
-        meta_cell$Location_Center_Y <- NA
-    }
-    if (sum(names(meta_cell) == "Location_Center_Z") == 0) {
-        meta_cell$Location_Center_Z <- NA
+    for (column in setdiff(location, names(meta_cell))) {
+        meta_cell[[column]] <- NA
     }
 
     # remove meta label from names
-    names(meta_cell) <- str_remove(names(meta_cell), "Metadata_")
+    names(meta_cell) <- str_remove(names(meta_cell), "^Metadata_")
 
     # store meta and features in bioconductor object
-    sce <- SingleCellExperiment(
-        list(features = features),
-        colData = meta_cell
-    )
-    sce
+    SingleCellExperiment(list(features = features), colData = meta_cell)
 }
 
 #' Plot number of cells per image
@@ -164,16 +153,19 @@ loadData <- function(cell_file) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param bins Number of histogram bins
+#' @param bins numeric(1), number of histogram bins
 #' @return \code{\link[ggplot2]{ggplot2}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' plotCellsPerImage(sce)
 #'
 plotCellsPerImage <- function(sce, bins = 100) {
+    check_sce(sce)
+    check_column(sce, "ImageNumber", "ImageNumber")
+    check_number(bins, "bins", min = 1, integer = TRUE)
     colData(sce) |>
         as_tibble() |>
         group_by(ImageNumber) |>
@@ -184,10 +176,15 @@ plotCellsPerImage <- function(sce, bins = 100) {
         ggtitle("Number of Cells Per Image")
 }
 
-#' Plot number of cells per image
+#' Plot correlations between features and principal components
+#'
+#' Computes the Pearson correlation of every feature with the first
+#' principal components in \code{reducedDim(sce, "PCA")} and shows the
+#' features most correlated with one of them.
 #'
 #' @importFrom SummarizedExperiment assay
-#' @importFrom SingleCellExperiment reducedDim
+#' @importFrom SingleCellExperiment reducedDim reducedDimNames
+#' @importFrom stats cor
 #' @importFrom ggplot2 ggplot geom_tile aes scale_fill_gradient2 theme_minimal
 #' @importFrom ggplot2 coord_fixed ylab
 #' @importFrom dplyr mutate top_n
@@ -196,22 +193,30 @@ plotCellsPerImage <- function(sce, bins = 100) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param filter_by PC to use for feature selection
-#' @param top Number of top features to select
-#' @param pcs Number of PCs to plot
-#' @param assay_type A string specifying the assay
+#' @param filter_by numeric(1), principal component used to select features
+#' @param top numeric(1), number of features to show
+#' @param pcs integer vector, principal components to show
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[ggplot2]{ggplot2}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce, robust = TRUE)
 #' sce <- scater::runPCA(sce, exprs_values = "tfmfeatures", ncomponents = 10)
 #' plotPCACor(sce, filter_by = 1)
 #'
 plotPCACor <- function(sce, filter_by = 1, top = 20, pcs = seq(5),
-                       assay_type = "tfmfeatures") {
+    assay_type = "tfmfeatures") {
+    check_sce(sce)
+    check_assay(sce, assay_type)
+    if (!"PCA" %in% reducedDimNames(sce)) {
+        cli_abort(c(
+            "{.code reducedDim(sce, \"PCA\")} is missing.",
+            "i" = "Run {.fn scater::runPCA} first."
+        ))
+    }
     features <- assay(sce, assay_type)
     scores <- reducedDim(sce, "PCA")[, pcs]
     features_pcs <- cor(t(as.matrix(features)), scores)
@@ -250,17 +255,21 @@ plotPCACor <- function(sce, filter_by = 1, top = 20, pcs = seq(5),
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param min Remove cells below that number
-#' @param max Remove cells above that number
+#' @param min numeric(1), remove the cells of images with fewer cells
+#' @param max numeric(1), remove the cells of images with more cells
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- removeOutliers(sce, min = 0, max = 300)
 #'
 removeOutliers <- function(sce, min, max) {
+    check_sce(sce)
+    check_column(sce, "ImageNumber", "ImageNumber")
+    check_number(min, "min")
+    check_number(max, "max", min = min)
     cell_ids <-
         colData(sce) |>
         as_tibble() |>
@@ -277,51 +286,50 @@ removeOutliers <- function(sce, min, max) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- removeNAs(sce)
 #'
-removeNAs <- function(sce) {
-    mat <- assay(sce, "features")
-
-    miss_cells <- apply(mat, 2, function(x) sum(is.na(x)))
-    cell_ids <- which(miss_cells > 0)
-    if (length(cell_ids) > 0) {
-        sce <- sce[, -cell_ids]
-    }
-    sce
+removeNAs <- function(sce, assay_type = "features") {
+    check_sce(sce)
+    check_assay(sce, assay_type)
+    mat <- assay(sce, assay_type)
+    sce[, colSums(is.na(mat)) == 0]
 }
 
 #' Filter low variance features
 #'
 #' @importFrom SummarizedExperiment assay
+#' @importFrom MatrixGenerics rowVars rowMads
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param threshold Keep features that have larger variance than this threshold
-#' @param robust If true use median absolute deviation, otherwise use variance
+#' @param threshold numeric(1), keep features whose spread exceeds it
+#' @param robust logical(1), if \code{TRUE} the spread is the median absolute
+#'   deviation, otherwise the variance
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- removeLowVariance(sce)
 #'
-removeLowVariance <- function(sce, threshold = 0, robust = FALSE) {
-    mat <- assay(sce, "features")
-
-    if (!robust) {
-        spread <- apply(mat, 1, var)
-    } else {
-        spread <- apply(mat, 1, mad)
-    }
-    feature_ids <- which(spread > threshold)
-    sce[feature_ids, ]
+removeLowVariance <- function(sce, threshold = 0, robust = FALSE,
+    assay_type = "features") {
+    check_sce(sce)
+    check_number(threshold, "threshold")
+    check_flag(robust, "robust")
+    check_assay(sce, assay_type)
+    mat <- as.matrix(assay(sce, assay_type))
+    spread <- if (robust) rowMads(mat) else rowVars(mat)
+    sce[which(spread > threshold), ]
 }
 
 #' Remove zero-inflated features
@@ -330,118 +338,66 @@ removeLowVariance <- function(sce, threshold = 0, robust = FALSE) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param proportion Remove features exceeding this zero-inflation proportion
+#' @param proportion numeric(1) between 0 and 1, remove features with a
+#'   larger proportion of zeros
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- removeZeroInflation(sce)
 #'
-removeZeroInflation <- function(sce, proportion = 0.2) {
-    mat <- assay(sce, "features")
-    prop_zeros <- apply(mat, 1, function(x) mean(x == 0))
+removeZeroInflation <- function(sce, proportion = 0.2,
+                                assay_type = "features") {
+    check_sce(sce)
+    check_number(proportion, "proportion", min = 0)
+    check_assay(sce, assay_type)
+    mat <- as.matrix(assay(sce, assay_type))
+    prop_zeros <- rowMeans(mat == 0, na.rm = TRUE)
     sce[!(prop_zeros > proportion), ]
 }
 
 #' Transform, center, and scale features
 #'
+#' Transforms each family of CellProfiler features to an approximately
+#' unbounded, symmetric scale (logarithm for intensities and
+#' dispersion-type texture measures, Fisher's z for correlations, logit for
+#' proportions, and a rank-based inverse normal transformation for
+#' thresholded colocalization coefficients), caps infinite values at the
+#' finite extremes of each feature, and standardizes every feature.
+#'
 #' @importFrom SummarizedExperiment assay assay<-
 #' @importFrom stats qlogis qnorm
+#' @importFrom MatrixGenerics rowMedians rowMads rowMaxs rowMins
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param robust If true robust z-score, otherwise standard z-score
+#' @param robust logical(1), if \code{TRUE} robust z-scores (median and
+#'   median absolute deviation), otherwise standard z-scores
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#'   with the transformed features in the new assay \code{"tfmfeatures"}
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
-transformScale <- function(sce, robust = FALSE) {
-    mat <- assay(sce, "features")
-
-    # variance features
-    var_ids <- str_detect(
-        rownames(mat),
-        paste(
-            c(
-                "Correlation_K_",
-                "Variance_",
-                "Contrast",
-                "MeanIntensity",
-                "StdIntensity",
-                "IntegratedIntensity",
-                "SumAverage",
-                "MedianIntensity",
-                "MADIntensity",
-                "UpperQuartileIntensity",
-                "LowerQuartileIntensity",
-                "MaxIntensity",
-                "MinIntensity"
-            ),
-            collapse = "|"
-        )
-    )
-    submat <- mat[var_ids, ]
-    submat <- pmax(submat, 0)
-    submat <- log(submat)
-    mat[var_ids, ] <- submat
-
-    # correlation features
-    corr_ids <- str_detect(rownames(mat), "_Correlation_")
-    submat <- mat[corr_ids, ]
-    submat <- pmax(pmin(submat, 1), -1)
-    submat <- atanh(submat)
-    mat[corr_ids, ] <- submat
-
-    # proportion features
-    prop_ids <- str_detect(rownames(mat), "Texture_AngularSecondMoment_")
-    submat <- mat[prop_ids, ]
-    submat <- pmax(pmin(submat, 1), 0)
-    submat <- qlogis(submat)
-    mat[prop_ids, ] <- submat
-
-    # extreme value features
-    prop_ids <- str_detect(
-        rownames(mat),
-        "Correlation_Costes_|Correlation_Manders_"
-    )
-    submat <- mat[prop_ids, ]
-    quantile_norm <- function(x) {
-        n <- sum(!is.na(x))
-        r <- rank(x, na.last = "keep", ties.method = "random")
-        # Blom adjustment to avoid -Inf and Inf
-        qnorm((r - 0.375) / (n + 0.25))
-    }
-    submat <- t(apply(submat, 1, quantile_norm))
-    mat[prop_ids, ] <- submat
-
-    # fix infinities
-    cap_inf <- function(x) {
-        finite_x <- x[is.finite(x)]
-        max_val <- max(finite_x, na.rm = TRUE)
-        min_val <- min(finite_x, na.rm = TRUE)
-        x[x == Inf] <- max_val
-        x[x == -Inf] <- min_val
-        x
-    }
-    mat <- t(apply(mat, 1, cap_inf))
-
+transformScale <- function(sce, robust = FALSE, assay_type = "features") {
+    check_sce(sce)
+    check_flag(robust, "robust")
+    check_assay(sce, assay_type)
+    mat <- transform_families(as.matrix(assay(sce, assay_type)))
+    mat <- cap_infinite(mat)
     if (!robust) {
         # option: standard z-score
-        mat <- mat |>
-            t() |>
-            scale() |>
-            t()
+        mat <- t(scale(t(mat)))
     } else {
         # option: robust z-score
-        median_features <- apply(mat, 1, median)
-        mad_features <- apply(mat, 1, mad)
-        mat <- (mat - median_features) / mad_features
+        mat <- (mat - rowMedians(mat)) / rowMads(mat)
     }
 
     # add transformed features
@@ -449,10 +405,76 @@ transformScale <- function(sce, robust = FALSE) {
     sce
 }
 
+#' Internal function to transform each family of CellProfiler features
+#'
+#' @importFrom stats qlogis qnorm
+#' @param mat Matrix with features as rows and cells as columns
+#' @return Matrix of the same dimensions
+#' @noRd
+#'
+transform_families <- function(mat) {
+    features <- rownames(mat)
+
+    # intensities and dispersion-type texture measures: logarithm
+    log_patterns <- c(
+        "Correlation_K_", "Variance_", "Contrast", "MeanIntensity",
+        "StdIntensity", "IntegratedIntensity", "SumAverage",
+        "MedianIntensity", "MADIntensity", "UpperQuartileIntensity",
+        "LowerQuartileIntensity", "MaxIntensity", "MinIntensity"
+    )
+    ids <- str_detect(features, paste(log_patterns, collapse = "|"))
+    mat[ids, ] <- log(pmax(mat[ids, ], 0))
+
+    # correlation coefficients: Fisher's z-transformation
+    ids <- str_detect(features, "_Correlation_")
+    mat[ids, ] <- atanh(pmax(pmin(mat[ids, ], 1), -1))
+
+    # proportions: logit
+    ids <- str_detect(features, "Texture_AngularSecondMoment_")
+    mat[ids, ] <- qlogis(pmax(pmin(mat[ids, ], 1), 0))
+
+    # thresholded colocalization coefficients: rank-based inverse normal
+    # transformation with Blom's offset, which avoids -Inf and Inf
+    ids <- which(
+        str_detect(features, "Correlation_Costes_|Correlation_Manders_")
+    )
+    blom <- function(x) {
+        r <- rank(x, na.last = "keep", ties.method = "random")
+        qnorm((r - 0.375) / (sum(!is.na(x)) + 0.25))
+    }
+    for (i in ids) {
+        mat[i, ] <- blom(mat[i, ])
+    }
+    mat
+}
+
+#' Internal function to cap infinite values at the finite extremes
+#'
+#' @importFrom MatrixGenerics rowMaxs rowMins
+#' @param mat Matrix with features as rows and cells as columns
+#' @return Matrix of the same dimensions with every infinite value replaced
+#'   by the largest or smallest finite value of its feature
+#' @noRd
+#'
+cap_infinite <- function(mat) {
+    finite <- mat
+    finite[!is.finite(finite)] <- NA
+    upper <- which(mat == Inf, arr.ind = TRUE)
+    lower <- which(mat == -Inf, arr.ind = TRUE)
+    mat[upper] <- rowMaxs(finite, na.rm = TRUE)[upper[, 1]]
+    mat[lower] <- rowMins(finite, na.rm = TRUE)[lower[, 1]]
+    mat
+}
+
 #' Remove row and column effect using the median polish procedure
 #'
+#' Fits Tukey's median polish to the per-well medians of each feature and
+#' subtracts the overall, row, and column effects from every cell, similar
+#' to the B-score of high-throughput screening. The column data need the
+#' factors \code{Row} and \code{Col} with the plate position of each cell.
+#'
 #' @importFrom SummarizedExperiment assay assay<-
-#' @importFrom stats qlogis qnorm medpolish
+#' @importFrom stats qlogis qnorm medpolish median
 #' @importFrom scrapper aggregateAcrossCells
 #' @importFrom tidyr pivot_wider
 #' @importFrom cli cli_abort
@@ -460,16 +482,17 @@ transformScale <- function(sce, robust = FALSE) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param assay_type A string specifying the assay
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#'   with the corrected features in the new assay \code{"corrected"}
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #' row <- substr(sce$Well, 1, 1)
-#' row <- factor(row, levels = LETTERS[1:length(unique(row))])
+#' row <- factor(row, levels = sort(unique(row)))
 #' col <- substr(sce$Well, 2, 3)
 #' col <- factor(as.numeric(col))
 #' sce$Row <- row
@@ -477,8 +500,10 @@ transformScale <- function(sce, robust = FALSE) {
 #' sce <- removeRowColEffect(sce)
 #'
 removeRowColEffect <- function(sce,
-                               assay_type = "tfmfeatures") {
+    assay_type = "tfmfeatures") {
     # check input
+    check_sce(sce)
+    check_assay(sce, assay_type)
     if (!is.factor(sce$Col)) {
         cli::cli_abort(c(
             "'Col' in {.code colData(sce)$Col} must be a factor",
@@ -492,59 +517,45 @@ removeRowColEffect <- function(sce,
         ))
     }
 
-    # retrieve count matrix
+    # median of each feature per well
     mat <- assay(sce, assay_type)
-
-    # get group index
     aggr <- scrapper::aggregateAcrossCells(
-        assay(sce, assay_type),
+        mat,
         factors = colData(sce)[, c("Col", "Row")]
     )
+    mat_well <- t(apply(mat, 1, function(x) tapply(x, aggr$index, median)))
 
-    # calculate median per well
-    idx <- aggr$index
-    mat_well <- assay(sce, assay_type)
-    mat_well <- t(apply(mat_well, 1, function(x) tapply(x, idx, median)))
-
-    # loop over all features
+    # subtract the overall, row, and column medians from every cell
     corrected <- mat
-    for (feature_ind in seq_len(nrow(sce))) {
-        # convert to matrix
-        df_plate_layout_well <- data.frame(
-            feature = mat_well[feature_ind, ],
-            aggr$combinations
-        )
-        row_col_well_mat <- df_plate_layout_well |>
-            pivot_wider(names_from = Col, values_from = feature) |>
-            select(-Row) |>
-            as.matrix()
-        # NAs occur if no cells are in a well: setting NAs to zero
-        row_col_well_mat[is.na(row_col_well_mat)] <- 0
-        med <- medpolish(row_col_well_mat, trace.iter = FALSE)
-
-        # subtract medians from full sce object
-        df_plate_layout_full <- data.frame(
-            feature = mat[feature_ind, ],
-            colData(sce)[, c("Col", "Row")]
-        )
-        df_row <- data.frame(Row = levels(sce$Row), row_median = med$row)
-        df_col <- data.frame(Col = levels(sce$Col), col_median = med$col)
-        df_sce <-
-            df_plate_layout_full |>
-            left_join(df_row, by = join_by(Row)) |>
-            left_join(df_col, by = join_by(Col)) |>
-            mutate(overall_median = med$overall) |>
-            mutate(
-                corrected = feature - overall_median - row_median - col_median
-            )
-
-        # subtract the overall, row, and column medians
-        corrected[feature_ind, ] <- df_sce$corrected
+    for (i in seq_len(nrow(sce))) {
+        med <- polish_wells(mat_well[i, ], aggr$combinations)
+        corrected[i, ] <- mat[i, ] - med$overall -
+            med$row[as.integer(sce$Row)] - med$col[as.integer(sce$Col)]
     }
 
     # save in sce object
     assay(sce, "corrected") <- corrected
     sce
+}
+
+#' Internal function to fit a median polish to the well medians of a feature
+#'
+#' @importFrom stats medpolish
+#' @importFrom tidyr pivot_wider
+#' @importFrom dplyr select
+#' @param well_values Median of the feature in each well
+#' @param combinations Row and column of each well
+#' @return Output of \code{stats::medpolish()}
+#' @noRd
+#'
+polish_wells <- function(well_values, combinations) {
+    plate <- data.frame(feature = well_values, combinations) |>
+        pivot_wider(names_from = Col, values_from = feature) |>
+        select(-Row) |>
+        as.matrix()
+    # NAs occur if no cells are in a well: setting NAs to zero
+    plate[is.na(plate)] <- 0
+    medpolish(plate, trace.iter = FALSE)
 }
 
 #' Internal function to compute y_hat on a subset of the features
@@ -561,25 +572,33 @@ removeRowColEffect <- function(sce,
 #' @param feature_name String with feature name
 #' @param sce_feature \code{\link[SingleCellExperiment]{SingleCellExperiment}}
 #' @param starts Starting string
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param interest_level Factor interest level in `target` variable
-#' @param reference_level Factor reference level in `target` variable
-#' @param weights Weights variable when features are aggregated
-#' @param n_threads Number of parallel threads for fitting of models
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
+#' @param weights \code{NULL} or character(1), name of the column of
+#'   \code{colData(sce)} with case weights, for example cell counts when
+#'   cells are aggregated to images
+#' @param n_threads numeric(1), number of threads of each random forest fit
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[tibble]{tibble}} data frame
+#' @noRd
 #'
 compute_y_hat <- function(feature_name,
-                          sce_feature,
-                          starts,
-                          target,
-                          group,
-                          interest_level,
-                          reference_level,
-                          weights,
-                          n_threads,
-                          assay_type) {
+    sce_feature,
+    starts,
+    target,
+    group,
+    interest_level,
+    reference_level,
+    weights,
+    n_threads,
+    assay_type) {
     ml_data <- group_data(feature_name, sce_feature, starts, target,
         interest_level, reference_level, assay_type
     )
@@ -596,7 +615,9 @@ compute_y_hat <- function(feature_name,
         }
         data.frame(
             cell = test_ids,
-            score = fit_predict(ml_data, train_ids, test_ids, case_weights, n_threads)
+            score = fit_predict(
+                ml_data, train_ids, test_ids, case_weights, n_threads
+            )
         )
     })
 
@@ -616,20 +637,23 @@ compute_y_hat <- function(feature_name,
 #' @param sce_feature \code{\link[SingleCellExperiment]{SingleCellExperiment}}
 #' @param starts Select features that start with `feature_name` (types) or
 #'   contain it (channels)
-#' @param target Name of target variable for prediction
-#' @param interest_level Factor interest level in `target` variable
-#' @param reference_level Factor reference level in `target` variable
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{data.frame} with the factor `Target` and one column per feature
 #' @noRd
 #'
 group_data <- function(feature_name,
-                       sce_feature,
-                       starts,
-                       target,
-                       interest_level,
-                       reference_level,
-                       assay_type) {
+    sce_feature,
+    starts,
+    target,
+    interest_level,
+    reference_level,
+    assay_type) {
     # convert to regular expression
     if (feature_name == "all") {
         pattern <- ".*"
@@ -662,7 +686,8 @@ group_data <- function(feature_name,
 #' @param train_ids Rows of `ml_data` to train on
 #' @param test_ids Rows of `ml_data` to score
 #' @param case_weights Weights of the training rows, or `NULL`
-#' @param n_threads Number of parallel threads for fitting of models
+#' @param n_threads numeric(1), number of threads of each random forest fit
+#' @importFrom stats predict
 #' @return Numeric vector with the predicted probability of the interest level
 #'   for each row in `test_ids`
 #' @noRd
@@ -696,17 +721,28 @@ fit_predict <- function(ml_data, train_ids, test_ids, case_weights, n_threads) {
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param interest_level Factor interest level in `target` variable
-#' @param reference_level Factor reference level in `target` variable
-#' @param types Vector of strings of feature types
-#' @param channels Vector of strings of feature channels
-#' @param weights Weights variable when features are aggregated
-#' @param n_threads Number of parallel threads for fitting of models
-#' @param assay_type A string specifying the assay
-#' @param progress Show a progress bar while fitting the models of feature
-#'   types and channels
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
+#' @param types \code{NULL} or character vector of CellProfiler measurement
+#'   types, such as \code{"Intensity"}; each type is a feature group of the
+#'   features whose names start with it
+#' @param channels \code{NULL} or character vector of imaging channels, such
+#'   as \code{"DNA"} or \code{"Mito"}; each channel is a feature group of the
+#'   features whose names contain it
+#' @param weights \code{NULL} or character(1), name of the column of
+#'   \code{colData(sce)} with case weights, for example cell counts when
+#'   cells are aggregated to images
+#' @param n_threads numeric(1), number of threads of each random forest fit
+#' @param assay_type character(1), name of the assay with the features
+#' @param progress logical(1), show a progress bar while fitting the models
+#'   of feature types and channels
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'   with the cells of the two levels, the leave-one-out prediction scores in
 #'   \code{reducedDim(sce, "prevalidated")}, and the settings of this call in
@@ -715,7 +751,7 @@ fit_predict <- function(ml_data, train_ids, test_ids, case_weights, n_threads) {
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -732,72 +768,49 @@ fit_predict <- function(ml_data, train_ids, test_ids, case_weights, n_threads) {
 #' )
 #'
 predictLOO <- function(sce,
-                       target,
-                       group,
-                       interest_level,
-                       reference_level,
-                       types = NULL,
-                       channels = NULL,
-                       weights = NULL,
-                       n_threads = 1,
-                       assay_type = "tfmfeatures",
-                       progress = TRUE) {
+    target,
+    group,
+    interest_level,
+    reference_level,
+    types = NULL,
+    channels = NULL,
+    weights = NULL,
+    n_threads = 1,
+    assay_type = "tfmfeatures",
+    progress = TRUE) {
+    check_predict_args(
+        sce, target, group, interest_level, reference_level, types,
+        channels, weights, n_threads, assay_type, progress
+    )
+
     # subset for binary classification
     sce_subset <- sce[, sce[[target]] %in% c(reference_level, interest_level)]
 
-    # remove unused levels
-    sce_subset[[target]] <- droplevels(sce_subset[[target]])
+    # remove unused levels; a character target becomes a factor
+    sce_subset[[target]] <- droplevels(as.factor(sce_subset[[target]]))
+    check_groups(sce_subset, group, interest_level, reference_level)
 
-    # combine and add to reducedDim slot
-    y_hat <- compute_y_hat("all", sce_subset,
-        starts = TRUE,
-        target, group, interest_level, reference_level,
-        weights, n_threads, assay_type
-    )
-    if (length(types) > 0) {
-        y_hat <- bind_cols(
-            y_hat,
-            purrr::map(types, compute_y_hat, sce_subset,
-                starts = TRUE,
-                target, group, interest_level, reference_level,
-                weights, n_threads, assay_type,
-                .progress = progress
-            ) |>
-                bind_cols()
+    # leave-one-out scores of all features, the types, and the channels;
+    # types select features by prefix, channels by any match
+    groups <- c("all", types, channels)
+    starts <- c(TRUE, rep(TRUE, length(types)), rep(FALSE, length(channels)))
+    y_hat <- purrr::map2(groups, starts, function(feature_name, starts) {
+        compute_y_hat(feature_name, sce_subset, starts, target, group,
+            interest_level, reference_level, weights, n_threads, assay_type
         )
-    }
-    if (length(channels) > 0) {
-        y_hat <- bind_cols(
-            y_hat,
-            purrr::map(channels, compute_y_hat, sce_subset,
-                starts = FALSE,
-                target, group, interest_level, reference_level,
-                weights, n_threads, assay_type,
-                .progress = progress
-            ) |>
-                bind_cols()
-        )
-    }
-    y_hat <- y_hat |> as.matrix()
+    }, .progress = progress && length(groups) > 1) |>
+        bind_cols() |>
+        as.matrix()
 
-    # add y_hat to sce object
-    cell_id <- seq(ncol(sce_subset))
-    rownames(y_hat) <- cell_id
-    colnames(sce_subset) <- cell_id
+    # add y_hat to sce object, keeping the cell names if there are any
+    rownames(y_hat) <- colnames(sce_subset)
     reducedDim(sce_subset, "prevalidated") <- y_hat
 
     # record the settings, which calculateStats() needs to refit the models
-    metadata(sce_subset)$predictLOO <- list(
-        target = target,
-        group = group,
-        interest_level = interest_level,
-        reference_level = reference_level,
-        types = types,
-        channels = channels,
-        weights = weights,
-        n_threads = n_threads,
-        assay_type = assay_type
-    )
+    metadata(sce_subset)$predictLOO <- mget(c(
+        "target", "group", "interest_level", "reference_level", "types",
+        "channels", "weights", "n_threads", "assay_type"
+    ))
     sce_subset
 }
 
@@ -806,15 +819,19 @@ predictLOO <- function(sce,
 #' @importFrom scrapper aggregateAcrossCells
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{data.frame}
+#' @noRd
 #'
 aggregateYhat <- function(sce,
-                          target,
-                          group,
-                          assay_type = "tfmfeatures") {
+    target,
+    group,
+    assay_type = "tfmfeatures") {
     meta_vars <- c(target, group)
 
     # get group index
@@ -837,20 +854,24 @@ aggregateYhat <- function(sce,
 
 #' Plot predicted leave-one-out probabilities
 #'
+#' @importFrom rlang .data
 #' @importFrom ggplot2 ggplot aes geom_boxplot geom_jitter ylab facet_wrap
 #' @importFrom ggplot2 geom_hline
 #' @importFrom tidyr pivot_longer
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[ggplot2]{ggplot2}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -872,6 +893,8 @@ plotLOO <- function(sce,
                     target,
                     group,
                     assay_type = "tfmfeatures") {
+    check_prevalidated(sce, target, group)
+    check_assay(sce, assay_type)
     meta_vars <- c(target, group)
     y_hat <- aggregateYhat(sce, target, group, assay_type)
 
@@ -898,20 +921,25 @@ plotLOO <- function(sce,
 #' @importFrom stats t.test
 #'
 #' @param sce Output of \code{\link{predictLOO}}
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
-#' @param interest_level Factor interest level in `target` variable
-#' @param reference_level Factor reference level in `target` variable
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
 #' @return \code{data.frame} with one row per feature group
 #' @noRd
 #'
 score_statistics <- function(sce,
-                             target,
-                             group,
-                             assay_type,
-                             interest_level,
-                             reference_level) {
+    target,
+    group,
+    assay_type,
+    interest_level,
+    reference_level) {
     meta_vars <- c(target, group)
     y_hat <- aggregateYhat(sce, target, group, assay_type)
     feature_vars <- setdiff(names(y_hat), meta_vars)
@@ -1046,7 +1074,7 @@ all_subsets <- function(m, k) {
 #' @noRd
 #'
 mixed_relabelings <- function(observed, both, exact, n_permutations,
-                              symmetric = FALSE) {
+    symmetric = FALSE) {
     single <- !both
     # patients with both levels that may swap them
     free <- both
@@ -1086,32 +1114,27 @@ mixed_relabelings <- function(observed, both, exact, n_permutations,
     grid[!is_observed, , drop = FALSE]
 }
 
-#' Internal function to compute permutation p-values by relabeling patients
+#' Internal function to describe the design of the patients
 #'
-#' @importFrom cli cli_abort cli_progress_bar cli_progress_update
-#' @importFrom cli cli_progress_done
+#' Paired: every patient has both levels; unpaired: every patient has one;
+#' mixed: some patients have both levels, the others have one. If swapping
+#' the levels of all patients is a valid relabeling, it leaves the statistic
+#' unchanged, so one patient keeps its labels (`symmetric`), which halves the
+#' relabelings without changing the test.
 #'
 #' @param sce Output of \code{\link{predictLOO}}
-#' @param observed Output of \code{score_statistics} for the observed labels
 #' @param settings Settings of \code{\link{predictLOO}} from its metadata
-#' @param n_permutations Maximal number of relabelings besides the observed
-#' @return List with p-values and the number of relabelings
+#' @return List with the labels and patients of the cells, the sorted patient
+#'   ids, the design, the total number of relabelings, and the symmetry
 #' @noRd
 #'
-permutation_pvalues <- function(sce, observed, settings, n_permutations) {
-    target <- settings$target
-    group <- settings$group
-    interest_level <- settings$interest_level
-    reference_level <- settings$reference_level
-    labels <- as.character(sce[[target]])
-    patients <- as.character(sce[[group]])
+relabeling_design <- function(sce, settings) {
+    labels <- as.character(sce[[settings$target]])
+    patients <- as.character(sce[[settings$group]])
     ids <- sort(unique(patients))
     n <- length(ids)
-    in_interest <- ids %in% patients[labels == interest_level]
-    in_reference <- ids %in% patients[labels == reference_level]
-
-    # paired: every patient has both levels; unpaired: every patient has one;
-    # mixed: some patients have both levels, the others have one
+    in_interest <- ids %in% patients[labels == settings$interest_level]
+    in_reference <- ids %in% patients[labels == settings$reference_level]
     both <- in_interest & in_reference
     if (all(both)) {
         design <- "paired"
@@ -1123,87 +1146,152 @@ permutation_pvalues <- function(sce, observed, settings, n_permutations) {
         design <- "mixed"
         n_total <- 2^sum(both) * choose(sum(!both), sum(in_interest & !both))
     }
-
-    # swapping the levels of all patients leaves the statistic unchanged; if
-    # this is a valid relabeling, one patient keeps its labels, which halves
-    # the relabelings without changing the test
     single <- !both
     symmetric <- 2 * sum(in_interest & single) == sum(single)
     if (symmetric) {
         n_total <- n_total / 2
-        fixed <- if (design == "mixed") which(both)[1] else 1
     }
-    exact <- n_total <= n_permutations + 1
-    relabelings <- patient_relabelings(
-        design, n, in_interest, exact, n_permutations, both, symmetric
+    list(
+        labels = labels, patients = patients, ids = ids, n = n,
+        in_interest = in_interest, both = both, design = design,
+        n_total = n_total, symmetric = symmetric,
+        fixed = if (design == "mixed") which(both)[1] else 1
     )
-    n_relabelings <- nrow(relabelings) + 1
+}
+
+#' Internal function to report the relabelings of the permutation test
+#'
+#' @param d Output of \code{relabeling_design}
+#' @param exact Whether all relabelings are enumerated
+#' @param n_relabelings Number of relabelings, the observed one included
+#' @param settings Settings of \code{\link{predictLOO}} from its metadata
+#' @return `NULL`, invisibly; called for its messages
+#' @noRd
+#'
+report_relabelings <- function(d, exact, n_relabelings, settings) {
+    group <- settings$group
+    target <- settings$target
     message(
         "Permutation test with ", if (exact) "all " else "", n_relabelings,
-        " relabelings of ", n, " levels of '", group, "' (", design,
+        " relabelings of ", d$n, " levels of '", group, "' (", d$design,
         " design); smallest attainable p-value 1/", n_relabelings, "."
     )
-    if (symmetric) {
+    if (d$symmetric) {
         message(
-            "'", ids[fixed], "' keeps its labels, because exchanging the ",
+            "'", d$ids[d$fixed], "' keeps its labels, because exchanging the ",
             "two levels of '", target, "' in all levels of '", group,
             "' at once gives the same statistic."
         )
     }
-    if (design == "mixed") {
+    if (d$design == "mixed") {
         message(
             "Levels of '", group, "' with cells of only one level of '",
-            target, "': ", paste(ids[!both], collapse = ", "), "."
+            target, "': ", paste(d$ids[!d$both], collapse = ", "), "."
         )
     }
+    invisible(NULL)
+}
 
-    # labels of the cells after relabeling whole patients
-    relabel <- function(row) {
-        if (design == "unpaired") {
-            return(ifelse(patients %in% ids[row],
-                interest_level, reference_level
-            ))
-        }
-        # swap the two levels of the selected patients with both levels
-        swap <- if (design == "paired") row else row & both
-        swapped <- labels
-        selected <- patients %in% ids[swap]
-        swapped[selected] <- ifelse(labels[selected] == interest_level,
-            reference_level, interest_level
-        )
-        if (design == "mixed") {
-            # permute the levels among the patients with one level
-            single <- patients %in% ids[!both]
-            swapped[single] <- ifelse(patients[single] %in% ids[row & !both],
-                interest_level, reference_level
-            )
-        }
-        swapped
+#' Internal function to relabel the cells of whole patients
+#'
+#' @param row Logical vector, one row of \code{patient_relabelings}
+#' @param d Output of \code{relabeling_design}
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
+#' @return Character vector with the new label of each cell
+#' @noRd
+#'
+relabel_cells <- function(row, d, interest_level, reference_level) {
+    patients <- d$patients
+    ids <- d$ids
+    if (d$design == "unpaired") {
+        return(ifelse(patients %in% ids[row], interest_level, reference_level))
     }
+    # swap the two levels of the selected patients with both levels
+    swap <- if (d$design == "paired") row else row & d$both
+    swapped <- d$labels
+    selected <- patients %in% ids[swap]
+    swapped[selected] <- ifelse(d$labels[selected] == interest_level,
+        reference_level, interest_level
+    )
+    if (d$design == "mixed") {
+        # permute the levels among the patients with one level
+        single <- patients %in% ids[!d$both]
+        swapped[single] <- ifelse(patients[single] %in% ids[row & !d$both],
+            interest_level, reference_level
+        )
+    }
+    swapped
+}
+
+#' Internal function to refit all models for one relabeling
+#'
+#' @param row Logical vector, one row of \code{patient_relabelings}
+#' @param sce Output of \code{\link{predictLOO}}
+#' @param settings Settings of \code{\link{predictLOO}} from its metadata
+#' @param d Output of \code{relabeling_design}
+#' @param features Feature groups in the order of the observed statistics
+#' @return Numeric vector with the statistic of each feature group
+#' @noRd
+#'
+refit_statistics <- function(row, sce, settings, d, features) {
+    relabeled <- sce
+    relabeled[[settings$target]] <- factor(
+        relabel_cells(
+            row, d, settings$interest_level, settings$reference_level
+        ),
+        levels = levels(sce[[settings$target]])
+    )
+    refit <- do.call(
+        predictLOO,
+        c(list(sce = relabeled), settings, list(progress = FALSE))
+    )
+    statistics <- score_statistics(refit, settings$target, settings$group,
+        settings$assay_type, settings$interest_level, settings$reference_level
+    )
+    statistics$statistic[match(features, statistics$Feature)]
+}
+
+#' Internal function to compute permutation p-values by relabeling patients
+#'
+#' The relabelings are refitted with \code{future.apply::future_lapply()},
+#' sequentially unless the user sets a parallel plan with
+#' \code{future::plan()}.
+#'
+#' @importFrom future.apply future_lapply
+#'
+#' @param sce Output of \code{\link{predictLOO}}
+#' @param observed Output of \code{score_statistics} for the observed labels
+#' @param settings Settings of \code{\link{predictLOO}} from its metadata
+#' @param n_permutations Maximal number of relabelings besides the observed
+#' @return List with p-values and the number of relabelings
+#' @noRd
+#'
+permutation_pvalues <- function(sce, observed, settings, n_permutations) {
+    d <- relabeling_design(sce, settings)
+    exact <- d$n_total <= n_permutations + 1
+    relabelings <- patient_relabelings(
+        d$design, d$n, d$in_interest, exact, n_permutations, d$both,
+        d$symmetric
+    )
+    n_relabelings <- nrow(relabelings) + 1
+    report_relabelings(d, exact, n_relabelings, settings)
 
     # refit all leave-one-out models for each relabeling
-    null_statistics <- matrix(NA_real_,
-        nrow = nrow(relabelings), ncol = nrow(observed)
+    null_statistics <- future_lapply(
+        seq_len(nrow(relabelings)),
+        function(b) {
+            refit_statistics(relabelings[b, ], sce, settings, d,
+                observed$Feature
+            )
+        },
+        future.seed = TRUE
     )
-    cli_progress_bar("Refitting models", total = nrow(relabelings))
-    for (b in seq_len(nrow(relabelings))) {
-        relabeled <- sce
-        relabeled[[target]] <- factor(relabel(relabelings[b, ]),
-            levels = levels(sce[[target]])
-        )
-        refit <- do.call(
-            predictLOO,
-            c(list(sce = relabeled), settings, list(progress = FALSE))
-        )
-        statistics <- score_statistics(refit, target, group,
-            settings$assay_type, interest_level, reference_level
-        )
-        null_statistics[b, ] <- statistics$statistic[
-            match(observed$Feature, statistics$Feature)
-        ]
-        cli_progress_update()
-    }
-    cli_progress_done()
+    null_statistics <- matrix(unlist(null_statistics),
+        nrow = nrow(relabelings), byrow = TRUE
+    )
 
     # a relabeling counts against the observed labels if its statistic is at
     # least as large; undefined statistics count against them too
@@ -1249,17 +1337,22 @@ correction_factor <- function(n, method = c("corrected", "nadeau_bengio")) {
 #'
 #' @param sce Output of \code{\link{predictLOO}}
 #' @param observed Output of \code{score_statistics}
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param interest_level Factor interest level in `target` variable
-#' @param reference_level Factor reference level in `target` variable
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param interest_level character(1), level of `target` compared with the
+#'   reference, such as a drug
+#' @param reference_level character(1), level of `target` used as the
+#'   reference, such as the control
 #' @param method Either `"corrected"` or `"nadeau_bengio"`
 #' @return Vector of p-values, one per row of `observed`
 #' @noRd
 #'
 corrected_pvalues <- function(sce, observed, target, group,
-                              interest_level, reference_level,
-                              method = "corrected") {
+    interest_level, reference_level,
+    method = "corrected") {
     name <- if (method == "corrected") {
         "The corrected t-test"
     } else {
@@ -1268,7 +1361,8 @@ corrected_pvalues <- function(sce, observed, target, group,
     min_n <- if (method == "corrected") 3 else 2
     labels <- as.character(sce[[target]])
     patients <- as.character(sce[[group]])
-    ids <- sort(unique(patients[labels %in% c(interest_level, reference_level)]))
+    in_levels <- labels %in% c(interest_level, reference_level)
+    ids <- sort(unique(patients[in_levels]))
     n <- length(ids)
 
     paired <- vapply(ids, function(id) {
@@ -1278,7 +1372,8 @@ corrected_pvalues <- function(sce, observed, target, group,
         cli_abort(c(
             paste(
                 "{name} needs a paired design, in which every",
-                "level of {.arg group} has cells of both levels of {.arg target}."
+                "level of {.arg group} has cells of both levels of",
+                "{.arg target}."
             ),
             "i" = "Levels with cells of one level only: {ids[!paired]}.",
             "i" = "Use {.code method = \"permutation\"} instead."
@@ -1289,6 +1384,30 @@ corrected_pvalues <- function(sce, observed, target, group,
     }
     pt(observed$statistic / correction_factor(n, method), n - 1,
         lower.tail = FALSE
+    )
+}
+
+#' Internal function for the two levels compared by calculateStats
+#'
+#' The levels passed to \code{\link{predictLOO}}; for objects without its
+#' settings, the first two factor levels, reference first.
+#'
+#' @param sce Output of \code{\link{predictLOO}}
+#' @param settings Settings of \code{\link{predictLOO}} from its metadata
+#' @param target Name of the target column
+#' @return List with `interest` and `reference`
+#' @noRd
+#'
+analysis_levels <- function(sce, settings, target) {
+    if (!is.null(settings) && identical(settings$target, target)) {
+        return(list(
+            interest = settings$interest_level,
+            reference = settings$reference_level
+        ))
+    }
+    list(
+        interest = levels(sce[[target]])[2],
+        reference = levels(sce[[target]])[1]
     )
 }
 
@@ -1360,9 +1479,12 @@ corrected_pvalues <- function(sce, observed, target, group,
 #' @export
 #'
 #' @param sce Output of \code{\link{predictLOO}}
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
 #' @param method Either `"permutation"` (default) for a permutation test that
 #'   relabels whole patients, `"corrected"` for the corrected paired t-test,
 #'   `"nadeau_bengio"` for the paired t-test with the correction of Nadeau
@@ -1378,7 +1500,7 @@ corrected_pvalues <- function(sce, observed, target, group,
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -1418,26 +1540,18 @@ corrected_pvalues <- function(sce, observed, target, group,
 #' )
 #'
 calculateStats <- function(sce,
-                           target,
-                           group,
-                           assay_type = "tfmfeatures",
-                           method = c(
-                               "permutation", "corrected",
-                               "nadeau_bengio", "t"
-                           ),
-                           n_permutations = 999) {
+    target,
+    group,
+    assay_type = "tfmfeatures",
+    method = c("permutation", "corrected", "nadeau_bengio", "t"),
+    n_permutations = 999) {
     method <- match.arg(method)
+    check_prevalidated(sce, target, group)
+    check_assay(sce, assay_type)
     settings <- metadata(sce)$predictLOO
-
-    # levels as passed to predictLOO(); objects from earlier versions of
-    # cellpaintr store the reference level first
-    if (!is.null(settings) && identical(settings$target, target)) {
-        reference_level <- settings$reference_level
-        interest_level <- settings$interest_level
-    } else {
-        reference_level <- levels(sce[[target]])[1]
-        interest_level <- levels(sce[[target]])[2]
-    }
+    levels <- analysis_levels(sce, settings, target)
+    interest_level <- levels$interest
+    reference_level <- levels$reference
 
     observed <- score_statistics(sce, target, group, assay_type,
         interest_level, reference_level
@@ -1458,20 +1572,8 @@ calculateStats <- function(sce,
         return(stats)
     }
 
-    if (is.null(settings) || !identical(settings$target, target) ||
-        !identical(settings$group, group)) {
-        cli_abort(c(
-            "The permutation test refits the models of {.fn predictLOO}.",
-            "i" = paste(
-                "Pass its output with the same {.arg target} and",
-                "{.arg group}, or use {.code method = \"t\"}."
-            )
-        ))
-    }
-    if (!is.numeric(n_permutations) || length(n_permutations) != 1 ||
-        n_permutations < 1) {
-        cli_abort("{.arg n_permutations} must be a positive number.")
-    }
+    check_refit_settings(settings, target, group)
+    check_number(n_permutations, "n_permutations", min = 1, integer = TRUE)
     permutation <- permutation_pvalues(sce, observed, settings, n_permutations)
     stats$pvalue <- permutation$pvalue
     attr(stats, "relabelings") <- permutation$relabelings
@@ -1485,9 +1587,12 @@ calculateStats <- function(sce,
 #' @importFrom ggrepel geom_text_repel
 #' @export
 #'
-#' @param sce A \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
+#' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
 #' @param p_cutoff Cut-off for statistical significance. A horizontal line
 #'                 will be drawn at -log10(p_cutoff). Defaults to 0.01
 #'                 divided by the number of feature groups. With few
@@ -1496,7 +1601,7 @@ calculateStats <- function(sce,
 #'                 over the number of relabelings.
 #' @param fc_cutoff Cut-off for absolute log2 fold-change. A vertical lines
 #'                  will be drawn at fc_cutoff.
-#' @param assay_type A string specifying the assay
+#' @param assay_type character(1), name of the assay with the features
 #' @param stats Output of \code{\link{calculateStats}}; if `NULL`, it is
 #'              computed from `sce`
 #' @param ... Further arguments to \code{\link{calculateStats}}, such as
@@ -1505,7 +1610,7 @@ calculateStats <- function(sce,
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -1536,6 +1641,9 @@ volcanoPlot <- function(sce,
                         assay_type = "tfmfeatures",
                         stats = NULL,
                         ...) {
+    check_prevalidated(sce, target, group)
+    check_number(fc_cutoff, "fc_cutoff")
+    if (!is.null(p_cutoff)) check_number(p_cutoff, "p_cutoff", min = 0)
     if (is.null(stats)) {
         stats <- calculateStats(sce, target, group, assay_type, ...)
     }
@@ -1575,14 +1683,17 @@ volcanoPlot <- function(sce,
 #' @export
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[ggplot2]{ggplot2}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -1604,6 +1715,8 @@ plotROC <- function(sce,
                     target,
                     group,
                     assay_type = "tfmfeatures") {
+    check_prevalidated(sce, target, group)
+    check_assay(sce, assay_type)
     meta_vars <- c(target, group)
     y_hat <- aggregateYhat(sce, target, group, assay_type)
     result <- y_hat |>
@@ -1646,6 +1759,8 @@ plotROC <- function(sce,
 
 #' Plot AUC comparison
 #'
+#' @importFrom stats median
+#' @importFrom dplyr desc
 #' @importFrom SingleCellExperiment colData
 #' @importFrom ggplot2 ggplot xlab ggtitle geom_jitter aes
 #' @importFrom dplyr group_by bind_rows summarize arrange pull
@@ -1654,15 +1769,18 @@ plotROC <- function(sce,
 #' @importFrom tidyr pivot_longer
 #' @export
 #'
-#' @param sce A \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
-#' @param target Name of target variable for prediction
-#' @param group Grouping variable for cross-validation, e.g., patient
-#' @param assay_type A string specifying the assay
+#' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#' @param target character(1), name of the column of \code{colData(sce)}
+#'   with the condition of each cell, such as the drug
+#' @param group character(1), name of the column of \code{colData(sce)}
+#'   with the replicate of each cell, such as the patient; the replicates
+#'   are the folds of the leave-one-out cross-validation
+#' @param assay_type character(1), name of the assay with the features
 #' @return \code{\link[ggplot2]{ggplot2}} object
 #'
 #' @examples
 #' set.seed(23)
-#' cell_file <- generate_data()
+#' cell_file <- generateData()
 #' sce <- loadData(cell_file)
 #' sce <- transformScale(sce)
 #'
@@ -1684,6 +1802,8 @@ plotAUC <- function(sce,
                     target,
                     group,
                     assay_type = "tfmfeatures") {
+    check_prevalidated(sce, target, group)
+    check_assay(sce, assay_type)
     meta_vars <- c(target, group)
     y_hat <- aggregateYhat(sce, target, group, assay_type)
     result <- y_hat |>
@@ -1704,8 +1824,8 @@ plotAUC <- function(sce,
 
     fct_order <- aucs |>
         group_by(features) |>
-        summarize(median = median(.estimate)) |>
-        arrange(desc(median)) |>
+        summarize(median_auc = median(.estimate)) |>
+        arrange(desc(median_auc)) |>
         pull(features)
 
     aucs |>

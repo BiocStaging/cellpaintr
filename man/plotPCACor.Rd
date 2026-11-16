@@ -2,7 +2,7 @@
 % Please edit documentation in R/cellpaintr.R
 \name{plotPCACor}
 \alias{plotPCACor}
-\title{Plot number of cells per image}
+\title{Plot correlations between features and principal components}
 \usage{
 plotPCACor(
   sce,
@@ -15,23 +15,25 @@ plotPCACor(
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{filter_by}{PC to use for feature selection}
+\item{filter_by}{numeric(1), principal component used to select features}
 
-\item{top}{Number of top features to select}
+\item{top}{numeric(1), number of features to show}
 
-\item{pcs}{Number of PCs to plot}
+\item{pcs}{integer vector, principal components to show}
 
-\item{assay_type}{A string specifying the assay}
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[ggplot2]{ggplot2}} object
 }
 \description{
-Plot number of cells per image
+Computes the Pearson correlation of every feature with the first
+principal components in \code{reducedDim(sce, "PCA")} and shows the
+features most correlated with one of them.
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- transformScale(sce, robust = TRUE)
 sce <- scater::runPCA(sce, exprs_values = "tfmfeatures", ncomponents = 10)

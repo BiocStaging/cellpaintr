@@ -9,9 +9,9 @@ removeOutliers(sce, min, max)
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
-\item{min}{Remove cells below that number}
+\item{min}{numeric(1), remove the cells of images with fewer cells}
 
-\item{max}{Remove cells above that number}
+\item{max}{numeric(1), remove the cells of images with more cells}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -21,7 +21,7 @@ Remove cells if not enough or too many in one image
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- removeOutliers(sce, min = 0, max = 300)
 

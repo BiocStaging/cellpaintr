@@ -1,6 +1,6 @@
 test_that("plot cells per image", {
     set.seed(23)
-    cell_file <- generate_data()
+    cell_file <- generateData()
     sce <- loadData(cell_file)
     p <- plotCellsPerImage(sce)
 
@@ -10,7 +10,7 @@ test_that("plot cells per image", {
 
 test_that("plot pca cor", {
     set.seed(23)
-    cell_file <- generate_data()
+    cell_file <- generateData()
     sce <- loadData(cell_file)
     sce <- transformScale(sce, robust = TRUE)
     sce <- scater::runPCA(sce, exprs_values = "tfmfeatures", ncomponents = 10)
@@ -22,7 +22,7 @@ test_that("plot pca cor", {
 
 test_that("plot prediction scores", {
     set.seed(23)
-    cell_file <- generate_data()
+    cell_file <- generateData()
     sce <- loadData(cell_file)
     sce <- transformScale(sce)
 

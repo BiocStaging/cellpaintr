@@ -4,10 +4,12 @@
 \alias{removeNAs}
 \title{Remove cells with missing features}
 \usage{
-removeNAs(sce)
+removeNAs(sce, assay_type = "features")
 }
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
+
+\item{assay_type}{character(1), name of the assay with the features}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -17,7 +19,7 @@ Remove cells with missing features
 }
 \examples{
 set.seed(23)
-cell_file <- generate_data()
+cell_file <- generateData()
 sce <- loadData(cell_file)
 sce <- removeNAs(sce)
 

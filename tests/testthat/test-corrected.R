@@ -1,6 +1,6 @@
 simulate_paired <- function() {
     set.seed(23)
-    cell_file <- generate_data()
+    cell_file <- generateData()
     sce <- loadData(cell_file)
     sce <- transformScale(sce)
     sce$Drug <- relevel(as.factor(sce$Drug), ref = "D1")
@@ -43,7 +43,8 @@ test_that("corrected t-test divides the paired t-statistic by the factor", {
         pt(statistic / sqrt(3), 3, lower.tail = FALSE)
     )
     # the correction makes the test more conservative in the upper tail
-    expect_true(all(stats$pvalue[statistic > 0] > t_stats$pvalue[statistic > 0]))
+    positive <- statistic > 0
+    expect_true(all(stats$pvalue[positive] > t_stats$pvalue[positive]))
 })
 
 test_that("corrected t-test needs no settings of predictLOO()", {
