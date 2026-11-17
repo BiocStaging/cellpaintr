@@ -10,8 +10,7 @@ Rheumatology, University Hospital Zurich). It lists the metadata columns
 `Metadata_Well`) and 770 measurement names of the Cells compartment, for four
 illumination-corrected channels (prefix `Corr`): `Blue` (nuclear stain),
 `CytoID` (CYTO-ID autophagy dye), `Lyso` (LysoTracker), and `TMRM`
-(mitochondrial membrane potential).
-<!-- TODO(authors): confirm the stains and add the CellProfiler version and pipeline. -->
+(mitochondrial membrane potential). We used CellProfiler 4.2.8.
 
 `generateData()` samples feature names from this header, so that the
 simulated table has realistic CellProfiler names and the transformations of

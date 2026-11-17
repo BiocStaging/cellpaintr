@@ -14,6 +14,43 @@
 
 - Submitted to Bioconductor
 
+# cellpaintr 0.99.4
+
+- `calculateStats()` calibrates the t-statistic with a permutation test that
+  relabels whole patients and refits all leave-one-out models
+  (`method = "permutation"`, the new default). It enumerates all
+  relabelings if there are at most `n_permutations + 1` of them and samples
+  them otherwise. `method = "t"` keeps the p-values from the t-distribution,
+  which are anti-conservative because the scores of different held-out
+  patients are correlated.
+- `predictLOO()` records its settings in `metadata()`, and
+  `calculateStats()` takes the interest and reference levels from there
+  instead of from the order of the factor levels.
+- `volcanoPlot()` accepts precomputed statistics (`stats`) and passes
+  further arguments, such as `method`, to `calculateStats()`.
+
+# cellpaintr 0.99.5
+
+- The permutation test of `calculateStats()` handles mixed designs, in which
+  only some patients have cells of both levels, for example after quality
+  control removed all cells of one level of a patient. It swaps the levels
+  of the patients with both levels, permutes the levels among the other
+  patients, and reports which patients have cells of one level only.
+
+# cellpaintr 0.99.6
+
+- `calculateStats()` offers a corrected paired t-test
+  (`method = "corrected"`). For every pair of patients, it refits the models
+  without both of them and adds the products of their influences on each
+  other's score differences to the sample variance, which makes the
+  variance unbiased under the null hypothesis. It needs n(n-1)/2 fits per
+  feature group for n patients instead of refitting all models for every
+  relabeling, and it can reach small p-values with few patients. The
+  attribute `variance_ratio` holds the corrected over the uncorrected
+  variance. The permutation test stays the default.
+- Internal: model fitting of `compute_y_hat()` moved into helpers shared
+  with the corrected t-test; results are unchanged.
+
 # cellpaintr 0.99.7
 
 Changes in response to the first Bioconductor review:
@@ -50,6 +87,8 @@ Changes in response to the first Bioconductor review:
 - More unit tests check values, not only classes, and cover the input
   checks.
 
+Changes to improve the package but unrelated to the Bioconductor review:
+
 - The corrected t-test of `calculateStats()` (`method = "corrected"`) now
   divides the paired t-statistic by sqrt(2(n-1)/(n-2)), the factor by which
   it is too large if each score difference is a sum of pairwise interactions
@@ -69,40 +108,3 @@ Changes in response to the first Bioconductor review:
   of refits, and the test stays exact. In a paired design with n patients,
   there are 2^(n-1) relabelings, and the smallest attainable p-value is
   2^(1-n) instead of a nominal 2^-n that depended on the forest seeds.
-
-# cellpaintr 0.99.6
-
-- `calculateStats()` offers a corrected paired t-test
-  (`method = "corrected"`). For every pair of patients, it refits the models
-  without both of them and adds the products of their influences on each
-  other's score differences to the sample variance, which makes the
-  variance unbiased under the null hypothesis. It needs n(n-1)/2 fits per
-  feature group for n patients instead of refitting all models for every
-  relabeling, and it can reach small p-values with few patients. The
-  attribute `variance_ratio` holds the corrected over the uncorrected
-  variance. The permutation test stays the default.
-- Internal: model fitting of `compute_y_hat()` moved into helpers shared
-  with the corrected t-test; results are unchanged.
-
-# cellpaintr 0.99.4
-
-- `calculateStats()` calibrates the t-statistic with a permutation test that
-  relabels whole patients and refits all leave-one-out models
-  (`method = "permutation"`, the new default). It enumerates all
-  relabelings if there are at most `n_permutations + 1` of them and samples
-  them otherwise. `method = "t"` keeps the p-values from the t-distribution,
-  which are anti-conservative because the scores of different held-out
-  patients are correlated.
-- `predictLOO()` records its settings in `metadata()`, and
-  `calculateStats()` takes the interest and reference levels from there
-  instead of from the order of the factor levels.
-- `volcanoPlot()` accepts precomputed statistics (`stats`) and passes
-  further arguments, such as `method`, to `calculateStats()`.
-
-# cellpaintr 0.99.5
-
-- The permutation test of `calculateStats()` handles mixed designs, in which
-  only some patients have cells of both levels, for example after quality
-  control removed all cells of one level of a patient. It swaps the levels
-  of the patients with both levels, permutes the levels among the other
-  patients, and reports which patients have cells of one level only.
