@@ -558,6 +558,24 @@ polish_wells <- function(well_values, combinations) {
     medpolish(plate, trace.iter = FALSE)
 }
 
+#' Internal function to make the target of two levels a factor
+#'
+#' Drops unused levels of a factor and keeps its order; turns a character
+#' vector into a factor with the reference level first.
+#'
+#' @param x Factor or character vector with the condition of each cell
+#' @param interest_level Interest level
+#' @param reference_level Reference level
+#' @return Factor with the two levels
+#' @noRd
+#'
+binary_target <- function(x, interest_level, reference_level) {
+    if (is.factor(x)) {
+        return(droplevels(x))
+    }
+    factor(x, levels = c(reference_level, interest_level))
+}
+
 #' Internal function to compute y_hat on a subset of the features
 #'
 #' @importFrom SummarizedExperiment assay
@@ -786,8 +804,9 @@ predictLOO <- function(sce,
     # subset for binary classification
     sce_subset <- sce[, sce[[target]] %in% c(reference_level, interest_level)]
 
-    # remove unused levels; a character target becomes a factor
-    sce_subset[[target]] <- droplevels(as.factor(sce_subset[[target]]))
+    sce_subset[[target]] <- binary_target(
+        sce_subset[[target]], interest_level, reference_level
+    )
     check_groups(sce_subset, group, interest_level, reference_level)
 
     # leave-one-out scores of all features, the types, and the channels;
@@ -1671,6 +1690,38 @@ volcanoPlot <- function(sce,
         geom_text_repel()
 }
 
+#' Internal function for the mean scores of each replicate and level
+#'
+#' The levels are those passed to \code{\link{predictLOO}}, reference first,
+#' so that the interest level is the event of the ROC analysis whatever the
+#' order of the factor levels of `target`.
+#'
+#' @importFrom S4Vectors metadata
+#' @importFrom tidyr pivot_longer
+#' @param sce Output of \code{\link{predictLOO}}
+#' @param target Name of the target column
+#' @param group Name of the group column
+#' @param assay_type Name of the assay
+#' @return List with `data`, the long table of mean scores per replicate,
+#'   level, and feature group, and the `interest` and `reference` levels
+#' @noRd
+#'
+roc_data <- function(sce, target, group, assay_type) {
+    levels <- analysis_levels(sce, metadata(sce)$predictLOO, target)
+    data <- aggregateYhat(sce, target, group, assay_type) |>
+        pivot_longer(
+            cols = -c(all_of(c(target, group))),
+            names_to = "features", values_to = "pred"
+        )
+    data[[target]] <- factor(as.character(data[[target]]),
+        levels = c(levels$reference, levels$interest)
+    )
+    list(
+        data = data, interest = levels$interest,
+        reference = levels$reference
+    )
+}
+
 #' Plot ROC curves
 #'
 #' @importFrom ggplot2 ggplot geom_path geom_abline coord_equal
@@ -1717,19 +1768,10 @@ plotROC <- function(sce,
                     assay_type = "tfmfeatures") {
     check_prevalidated(sce, target, group)
     check_assay(sce, assay_type)
-    meta_vars <- c(target, group)
-    y_hat <- aggregateYhat(sce, target, group, assay_type)
-    result <- y_hat |>
-        pivot_longer(
-            cols = -c(all_of(meta_vars)),
-            names_to = "features", values_to = "pred"
-        ) |>
-        droplevels()
-    result[[target]] <- factor(result[[target]], levels = levels(sce[[target]]))
-
-    # title
-    reference_level <- levels(result[[target]])[1]
-    interest_level <- levels(result[[target]])[2]
+    roc <- roc_data(sce, target, group, assay_type)
+    result <- roc$data
+    reference_level <- roc$reference
+    interest_level <- roc$interest
     mean_auc <- result |>
         group_by(features) |>
         yardstick::roc_auc(all_of(target), "pred", event_level = "second") |>
@@ -1804,18 +1846,10 @@ plotAUC <- function(sce,
                     assay_type = "tfmfeatures") {
     check_prevalidated(sce, target, group)
     check_assay(sce, assay_type)
-    meta_vars <- c(target, group)
-    y_hat <- aggregateYhat(sce, target, group, assay_type)
-    result <- y_hat |>
-        pivot_longer(
-            cols = -c(all_of(meta_vars)),
-            names_to = "features", values_to = "pred"
-        ) |>
-        droplevels()
-    result[[target]] <- factor(result[[target]], levels = levels(sce[[target]]))
-
-    reference_level <- levels(result[[target]])[1]
-    interest_level <- levels(result[[target]])[2]
+    roc <- roc_data(sce, target, group, assay_type)
+    result <- roc$data
+    reference_level <- roc$reference
+    interest_level <- roc$interest
     title_str <- paste0("Predict ", interest_level, " vs ", reference_level)
 
     aucs <- result |>
