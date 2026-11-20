@@ -29,8 +29,9 @@ Description: cellpaintr tests whether a perturbation, such as a drug,
     groups such as measurement types or imaging channels. Unlike profiling
     pipelines such as pycytominer, which aggregate cells into well-level
     profiles and compare their similarity, cellpaintr trains on single cells,
-    so changes in a subpopulation or in the shape of a feature distribution
-    contribute to the test.
+    so it learns the direction of an effect from the data and detects changes
+    in the spread or shape of a feature distribution that leave the means
+    unchanged.
 biocViews: 
     SingleCell,
     Software,
