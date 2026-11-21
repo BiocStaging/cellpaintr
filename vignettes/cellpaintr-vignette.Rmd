@@ -63,7 +63,7 @@ replicates:
 Profiling pipelines such as pycytominer aggregate single cells into
 well-level profiles and compare profiles by their similarity. cellpaintr
 instead trains on single cells, so it learns the direction of an effect from
-the data, which makes it powerful when all cells shift, even slightly, in
+the data, which makes it powerful when most cells shift, even slightly, in
 many features, and it detects changes in the spread or shape of a feature
 distribution that leave the means unchanged. A strong response of a small
 subpopulation of cells, on the other hand, is diluted in the mean score of a
