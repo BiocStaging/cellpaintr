@@ -530,7 +530,7 @@ removeRowColEffect <- function(sce,
     for (i in seq_len(nrow(sce))) {
         med <- polish_wells(mat_well[i, ], aggr$combinations)
         corrected[i, ] <- mat[i, ] - med$overall -
-            med$row[as.integer(sce$Row)] - med$col[as.integer(sce$Col)]
+            med$row[as.character(sce$Row)] - med$col[as.character(sce$Col)]
     }
 
     # save in sce object
@@ -545,17 +545,19 @@ removeRowColEffect <- function(sce,
 #' @importFrom dplyr select
 #' @param well_values Median of the feature in each well
 #' @param combinations Row and column of each well
-#' @return Output of \code{stats::medpolish()}
+#' @return Output of \code{stats::medpolish()}, with row and column effects
+#'   named by the levels of \code{Row} and \code{Col}
 #' @noRd
 #'
 polish_wells <- function(well_values, combinations) {
-    plate <- data.frame(feature = well_values, combinations) |>
-        pivot_wider(names_from = Col, values_from = feature) |>
-        select(-Row) |>
-        as.matrix()
-    # NAs occur if no cells are in a well: setting NAs to zero
-    plate[is.na(plate)] <- 0
-    medpolish(plate, trace.iter = FALSE)
+    wide <- data.frame(feature = well_values, combinations) |>
+        pivot_wider(names_from = Col, values_from = feature)
+    # rows and columns appear in the order of the wells, not of the factor
+    # levels, so the effects are named and looked up by name
+    plate <- as.matrix(select(wide, -Row))
+    rownames(plate) <- as.character(wide$Row)
+    # wells without cells are missing; the median polish leaves them out
+    medpolish(plate, trace.iter = FALSE, na.rm = TRUE)
 }
 
 #' Internal function to make the target of two levels a factor

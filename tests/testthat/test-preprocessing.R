@@ -153,3 +153,23 @@ test_that("preprocessing functions validate their arguments", {
     expect_error(plotCellsPerImage(sce, bins = 0), "at least 1")
     expect_error(plotPCACor(transformScale(sce)), "runPCA")
 })
+
+test_that("removeRowColEffect leaves out empty wells", {
+    # an additive plate: every cell is the sum of a row and a column effect,
+    # with well A1 empty
+    grid <- expand.grid(row = LETTERS[1:4], col = 1:4, cell = 1:3)
+    grid <- grid[!(grid$row == "A" & grid$col == 1), ]
+    row_effect <- c(A = 1, B = 2, C = 4, D = 8)
+    col_effect <- c(0, 10, 20, 30)
+    value <- row_effect[as.character(grid$row)] + col_effect[grid$col]
+    sce <- SingleCellExperiment::SingleCellExperiment(
+        list(tfmfeatures = rbind(feature = value))
+    )
+    sce$Row <- factor(grid$row)
+    sce$Col <- factor(grid$col)
+
+    # the median polish recovers the effects exactly, so nothing is left;
+    # setting the empty well to zero would leave residuals
+    corrected <- assay(removeRowColEffect(sce), "corrected")
+    expect_equal(unname(corrected[1, ]), rep(0, ncol(sce)), tolerance = 1e-8)
+})
