@@ -8,7 +8,6 @@ utils::globalVariables(c(
     "Row",
     "Target",
     "cell",
-    "col_median",
     "feature",
     "features",
     "importance",
@@ -16,9 +15,7 @@ utils::globalVariables(c(
     "median_auc",
     "n",
     "name",
-    "overall_median",
     "pvalue",
-    "row_median",
     "sensitivity",
     "specificity",
     "value"
