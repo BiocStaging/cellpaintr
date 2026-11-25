@@ -472,6 +472,13 @@ cap_infinite <- function(mat) {
 #' subtracts the overall, row, and column effects from every cell, similar
 #' to the B-score of high-throughput screening. The column data need the
 #' factors \code{Row} and \code{Col} with the plate position of each cell.
+#' Row and column effects differ between plates, so with several plates, pass
+#' the column with the plate (or batch) of each cell as `plate`; the median
+#' polish is then fitted to each plate separately. Wells without cells are
+#' left out of the fit. Because the median polish removes everything that
+#' varies with rows or columns, it also removes the part of a treatment
+#' effect that is confounded with them, so the conditions should be spread
+#' over the rows and columns of each plate.
 #'
 #' @importFrom SummarizedExperiment assay assay<-
 #' @importFrom stats qlogis qnorm medpolish median
@@ -483,6 +490,9 @@ cap_infinite <- function(mat) {
 #'
 #' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #' @param assay_type character(1), name of the assay with the features
+#' @param plate \code{NULL} or character(1), name of the column of
+#'   \code{colData(sce)} with the plate or batch of each cell; if
+#'   \code{NULL}, all cells come from one plate
 #' @return \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
 #'   with the corrected features in the new assay \code{"corrected"}
 #'
@@ -499,8 +509,15 @@ cap_infinite <- function(mat) {
 #' sce$Col <- col
 #' sce <- removeRowColEffect(sce)
 #'
+#' # several plates: one median polish per plate
+#' sce$Plate <- ifelse(sce$Patient %in% c("P1", "P2", "P3"),
+#'     "plate1", "plate2"
+#' )
+#' sce <- removeRowColEffect(sce, plate = "Plate")
+#'
 removeRowColEffect <- function(sce,
-    assay_type = "tfmfeatures") {
+    assay_type = "tfmfeatures",
+    plate = NULL) {
     # check input
     check_sce(sce)
     check_assay(sce, assay_type)
@@ -517,25 +534,78 @@ removeRowColEffect <- function(sce,
         ))
     }
 
-    # median of each feature per well
-    mat <- assay(sce, assay_type)
-    aggr <- scrapper::aggregateAcrossCells(
-        mat,
-        factors = colData(sce)[, c("Col", "Row")]
-    )
-    mat_well <- t(apply(mat, 1, function(x) tapply(x, aggr$index, median)))
+    plates <- plate_of_cells(sce, plate)
 
-    # subtract the overall, row, and column medians from every cell
+    # one median polish per plate
+    mat <- as.matrix(assay(sce, assay_type))
     corrected <- mat
-    for (i in seq_len(nrow(sce))) {
-        med <- polish_wells(mat_well[i, ], aggr$combinations)
-        corrected[i, ] <- mat[i, ] - med$overall -
-            med$row[as.character(sce$Row)] - med$col[as.character(sce$Col)]
+    for (p in unique(plates)) {
+        cells <- which(plates == p)
+        corrected[, cells] <- polish_plate(
+            mat[, cells, drop = FALSE], sce$Row[cells], sce$Col[cells]
+        )
     }
 
     # save in sce object
     assay(sce, "corrected") <- corrected
     sce
+}
+
+#' Internal function for the plate of each cell
+#'
+#' @importFrom cli cli_warn
+#' @param sce \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
+#' @param plate \code{NULL} or name of the column with the plate of each cell
+#' @return Character vector with the plate of each cell
+#' @noRd
+#'
+plate_of_cells <- function(sce, plate) {
+    if (!is.null(plate)) {
+        check_column(sce, plate, "plate")
+        plates <- as.character(sce[[plate]])
+        if (anyNA(plates)) {
+            cli_abort("{.code sce${plate}} must not have missing values.")
+        }
+        return(plates)
+    }
+    if ("Plate" %in% names(colData(sce)) &&
+        length(unique(sce$Plate)) > 1) {
+        cli_warn(c(
+            "All cells are polished as one plate, but {.code sce$Plate} has
+            {length(unique(sce$Plate))} plates.",
+            "i" = "Pass {.code plate = \"Plate\"} to fit each plate separately."
+        ))
+    }
+    rep("plate", ncol(sce))
+}
+
+#' Internal function to remove the row and column effects of one plate
+#'
+#' @importFrom stats median
+#' @importFrom scrapper aggregateAcrossCells
+#' @param mat Matrix of the features of the cells of one plate
+#' @param rows Factor with the row of each cell
+#' @param cols Factor with the column of each cell
+#' @return Matrix of the same dimensions without the overall, row, and
+#'   column effects
+#' @noRd
+#'
+polish_plate <- function(mat, rows, cols) {
+    # median of each feature per well
+    aggr <- scrapper::aggregateAcrossCells(
+        mat,
+        factors = list(Col = cols, Row = rows)
+    )
+    mat_well <- t(apply(mat, 1, function(x) tapply(x, aggr$index, median)))
+
+    # subtract the overall, row, and column medians from every cell
+    corrected <- mat
+    for (i in seq_len(nrow(mat))) {
+        med <- polish_wells(mat_well[i, ], aggr$combinations)
+        corrected[i, ] <- mat[i, ] - med$overall -
+            med$row[as.character(rows)] - med$col[as.character(cols)]
+    }
+    corrected
 }
 
 #' Internal function to fit a median polish to the well medians of a feature
@@ -1494,6 +1564,15 @@ analysis_levels <- function(sce, settings, target) {
 #' With `method = "t"`, the p-value comes from the t-distribution. This is
 #' fast but anti-conservative, because the score differences of different
 #' patients are positively correlated.
+#'
+#' @references
+#' Laphanuwat P, Ospelt C, Seiler C. cellpaintr: pre-validation with small
+#' sample sizes. In preparation; we plan to make the preprint available
+#' soon. It derives the corrections and compares the type I error and
+#' power of all tests with 4 to 12 patients.
+#'
+#' Nadeau C, Bengio Y (2003). Inference for the generalization error.
+#' Machine Learning, 52(3), 239-281.
 #'
 #' @importFrom S4Vectors metadata
 #' @importFrom cli cli_abort

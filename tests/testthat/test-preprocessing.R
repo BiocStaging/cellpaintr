@@ -173,3 +173,37 @@ test_that("removeRowColEffect leaves out empty wells", {
     corrected <- assay(removeRowColEffect(sce), "corrected")
     expect_equal(unname(corrected[1, ]), rep(0, ncol(sce)), tolerance = 1e-8)
 })
+
+test_that("removeRowColEffect fits each plate separately", {
+    # two additive plates with different row and column gradients
+    make_plate <- function(name, row_effect, col_effect) {
+        grid <- expand.grid(row = LETTERS[1:4], col = 1:4, cell = 1:3)
+        data.frame(
+            plate = name, row = grid$row, col = grid$col,
+            value = row_effect[as.character(grid$row)] + col_effect[grid$col]
+        )
+    }
+    cells <- rbind(
+        make_plate("plate1", c(A = 1, B = 2, C = 4, D = 8), c(0, 10, 20, 30)),
+        make_plate("plate2", c(A = 8, B = 4, C = 2, D = 1), c(30, 0, 0, 30))
+    )
+    sce <- SingleCellExperiment::SingleCellExperiment(
+        list(tfmfeatures = rbind(feature = cells$value))
+    )
+    sce$Row <- factor(cells$row)
+    sce$Col <- factor(cells$col)
+    sce$Plate <- cells$plate
+
+    # one median polish per plate recovers both gradients exactly
+    corrected <- assay(removeRowColEffect(sce, plate = "Plate"), "corrected")
+    expect_equal(unname(corrected[1, ]), rep(0, ncol(sce)), tolerance = 1e-8)
+
+    # pooling the plates leaves residuals and warns
+    expect_warning(
+        pooled <- removeRowColEffect(sce),
+        "Pass `plate = \"Plate\"`"
+    )
+    expect_gt(max(abs(assay(pooled, "corrected"))), 1)
+
+    expect_error(removeRowColEffect(sce, plate = "Batch"), "not a column")
+})

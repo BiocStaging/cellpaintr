@@ -4,12 +4,16 @@
 \alias{removeRowColEffect}
 \title{Remove row and column effect using the median polish procedure}
 \usage{
-removeRowColEffect(sce, assay_type = "tfmfeatures")
+removeRowColEffect(sce, assay_type = "tfmfeatures", plate = NULL)
 }
 \arguments{
 \item{sce}{\code{\link[SingleCellExperiment]{SingleCellExperiment}} object}
 
 \item{assay_type}{character(1), name of the assay with the features}
+
+\item{plate}{\code{NULL} or character(1), name of the column of
+\code{colData(sce)} with the plate or batch of each cell; if
+\code{NULL}, all cells come from one plate}
 }
 \value{
 \code{\link[SingleCellExperiment]{SingleCellExperiment}} object
@@ -20,6 +24,13 @@ Fits Tukey's median polish to the per-well medians of each feature and
 subtracts the overall, row, and column effects from every cell, similar
 to the B-score of high-throughput screening. The column data need the
 factors \code{Row} and \code{Col} with the plate position of each cell.
+Row and column effects differ between plates, so with several plates, pass
+the column with the plate (or batch) of each cell as `plate`; the median
+polish is then fitted to each plate separately. Wells without cells are
+left out of the fit. Because the median polish removes everything that
+varies with rows or columns, it also removes the part of a treatment
+effect that is confounded with them, so the conditions should be spread
+over the rows and columns of each plate.
 }
 \examples{
 set.seed(23)
@@ -33,5 +44,11 @@ col <- factor(as.numeric(col))
 sce$Row <- row
 sce$Col <- col
 sce <- removeRowColEffect(sce)
+
+# several plates: one median polish per plate
+sce$Plate <- ifelse(sce$Patient \%in\% c("P1", "P2", "P3"),
+    "plate1", "plate2"
+)
+sce <- removeRowColEffect(sce, plate = "Plate")
 
 }

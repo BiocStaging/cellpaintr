@@ -1,7 +1,7 @@
 Package: cellpaintr
 Type: Package
 Title: Perturbation Analysis for Cell Painting Data
-Version: 0.99.7
+Version: 0.99.8
 Authors@R: c(
     person("Christof", "Seiler", 
     email = "christof.seiler@usz.ch", 
@@ -38,7 +38,10 @@ biocViews:
     Classification,
     FeatureExtraction,
     Preprocessing,
-    Visualization
+    Visualization,
+    DataImport,
+    CellBasedAssays,
+    StatisticalMethod
 License: LGPL-3
 Encoding: UTF-8
 LazyData: false
